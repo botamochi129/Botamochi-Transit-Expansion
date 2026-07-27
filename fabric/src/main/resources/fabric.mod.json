@@ -1,0 +1,40 @@
+{
+	"schemaVersion": 1,
+	"id": "bte",
+	"version": "${version}",
+	"name": "Botamochi Transit Expansion",
+	"description": "Enhanced railway features for Minecraft Transit Railway 4.x",
+	"authors": [
+		"botamochi129"
+	],
+	"contributors": [
+	],
+	"contact": {
+	},
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+          "botamochi129.bte.entrypoint.Main"
+		],
+		"client": [
+          "botamochi129.bte.entrypoint.MainClient"
+		],
+		"modmenu": [
+          "botamochi129.bte.entrypoint.ModMenuConfig"
+		]
+	},
+	"mixins": [
+		"bte.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": "~${minecraft_version}",
+		"mtr": ">=4.0.4 <4.1",
+		"fabric": "*"
+	},
+	"custom": {
+		"modmenu": {
+		}
+	}
+}

@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "botamochi129.bte.mixin",
+  "compatibilityLevel": "JAVA_16",
+  "mixins": [
+    "mtr.RenderRailsMixin"
+  ],
+  "client": [
+    "minecraft.NativeImageAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "refmap": "bte.refmap.json"
+}

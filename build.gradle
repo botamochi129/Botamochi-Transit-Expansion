@@ -1,0 +1,143 @@
+plugins {
+	id 'com.gradleup.shadow' version '8.3.4' apply false
+}
+
+configure(subprojects) {
+	apply plugin: "java"
+	apply plugin: 'com.gradleup.shadow'
+
+	group project.maven_group
+	version "${rootProject.findProperty("mod_version")}+${rootProject.findProperty("minecraft_version")}"
+
+	configurations {
+		shadowImplementation
+		implementation.extendsFrom shadowImplementation
+	}
+
+	base {
+		archivesName = "${rootProject.findProperty("archives_base_name")}-${project.findProperty("loader_name")}"
+	}
+
+	dependencies {
+		implementation 'com.google.code.findbugs:jsr305:+'
+		implementation "folk.sisby:kaleido-config:${rootProject.findProperty("kaleido_version")}"
+	}
+
+	repositories {
+		mavenCentral()
+		maven { url "https://jitpack.io" }
+		maven { url 'https://repo.sleeping.town/' }
+	}
+
+	shadowJar {
+		configurations = [project.configurations.shadowImplementation]
+	}
+
+	def mc_ver = rootProject.property("minecraft_version").toString()
+	def mc_major = mc_ver.split("\\.")[0]
+	def mc_main = mc_ver.split("\\.")[1]
+	def mc_minor = mc_ver.split("\\.").size() > 2 ? (mc_ver.split("\\.")[2] as String).padLeft(2, '0') : 0
+	def merged_mc_version = "$mc_major$mc_main$mc_minor"
+
+	ext {
+		merged_mc_version_int = merged_mc_version as int
+		java_version =
+				(merged_mc_version as int) <= 11701 ? 16 :
+						(merged_mc_version as int) <= 12004 ? 17 :
+								21
+
+		lg_unicode = (mc_main as int) <= 19 ? rootProject.findProperty("legacy_unicode_font") : rootProject.findProperty("modern_fallback_font")
+		door_blockstate = (mc_main as int) <= 18 ? rootProject.findProperty("mc_door_118") : rootProject.findProperty("mc_door_119")
+
+		full_mod_version = version
+	}
+
+	/* Manifold support */
+	tasks.withType(JavaCompile).forEach {
+		it.options.compilerArgs += [
+				"-Xplugin:Manifold",
+				"-AMC_VERSION=$merged_mc_version",
+				"-ALOADER=${project.findProperty("loader_name")}"
+		]
+	}
+
+	compileJava {
+		options.encoding = 'UTF-8'
+	}
+
+	processResources {
+		inputs.property "version", version
+		inputs.property "minecraft_version", rootProject.findProperty("minecraft_version")
+		inputs.property "legacy_unicode", project.lg_unicode
+		inputs.property "mc_door_blockstate", project.door_blockstate
+		inputs.property "condition", merged_mc_version >= 12000 ? "any_of" : "alternative"
+
+		filesMatching('META-INF/mods.toml') {
+			expand (
+					"minecraft_version": rootProject.findProperty("minecraft_version"),
+					"mod_version": project.full_mod_version
+			)
+		}
+
+		filesMatching("fabric.mod.json") {
+			expand (
+					"version": project.full_mod_version,
+					"minecraft_version": rootProject.findProperty("minecraft_version")
+			)
+		}
+
+		filesMatching("build_metadata.json") {
+			expand(
+					"version": rootProject.findProperty("mod_version"),
+					"full_version": project.full_mod_version,
+					"mc_version": rootProject.findProperty("minecraft_version"),
+			)
+		}
+
+		filesMatching("**/font/*.json") {
+			expand (
+					"legacy_unicode": project.lg_unicode,
+			)
+		}
+
+		filesMatching("**/blockstates/auto_iron_door.json") {
+			expand (
+					"mc_door_blockstate": project.door_blockstate,
+			)
+		}
+
+		filesMatching("**/loot_tables/blocks/*.json") {
+			expand(
+					"condition": merged_mc_version >= 12000 ? "any_of" : "alternative"
+			)
+		}
+	}
+}
+
+// ▼ 修正点5: JCM 固有のパス (com/lx862/...) を削除し、BTE のパッケージ名に統一
+tasks.register("setupFiles") {
+	var sourceModloader = "fabric"
+
+	doLast {
+		for(var targetModloader : ["forge"]) {
+			delete fileTree("${targetModloader}/src/main/java/botamochi129/bte/mod")
+			delete fileTree("${targetModloader}/src/main/resources/assets")
+			delete fileTree("${targetModloader}/src/main/resources/data")
+
+			copy {
+				from "${sourceModloader}/src/main/java/botamochi129/bte/mod"
+				into "${targetModloader}/src/main/java/botamochi129/bte/mod"
+			}
+
+			copy {
+				from "${sourceModloader}/src/main/resources/assets"
+				into "${targetModloader}/src/main/resources/assets"
+			}
+
+			copy {
+				from "${sourceModloader}/src/main/resources/data"
+				into "${targetModloader}/src/main/resources/data"
+			}
+		}
+	}
+}
