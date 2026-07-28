@@ -1,17 +1,15 @@
 package botamochi129.bte.mapping;
 
 import botamochi129.bte.mod.data.AngleHelper;
-import botamochi129.bte.mixin.mtr.InitAccessor;
-import botamochi129.bte.mixin.mtr.MainAccessor;
 import net.fabricmc.loader.api.FabricLoader;
-import org.mtr.core.Main;
 import org.mtr.core.data.Data;
-import org.mtr.core.simulation.Simulator;
 import org.mtr.core.tool.Angle;
 import org.mtr.mapping.holder.*;
 import org.mtr.mod.Init;
 
+import java.lang.reflect.Field;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -29,26 +27,60 @@ public class LoaderImpl {
         return AngleHelper.createDynamicAngle(name, ordinal, degrees);
     }
 
-    /**
-     * Returns the Data (Simulator) for the given world, or null if unavailable.
-     */
-    public static Data getDataForWorld(World world) {
+    private static Field mainField;
+    private static Field simulatorsField;
+    private static Field worldIdListField;
+    private static boolean reflectionFailed = false;
+
+    static {
         try {
-            Object mainObj = InitAccessor.getMain();
-            if (mainObj == null) return null;
-            Main main = (Main) mainObj;
+            mainField = Init.class.getDeclaredField("main");
+            mainField.setAccessible(true);
+
+            Object mainInstance = mainField.get(null);
+            if (mainInstance != null) {
+                simulatorsField = mainInstance.getClass().getDeclaredField("simulators");
+                simulatorsField.setAccessible(true);
+            }
+
+            worldIdListField = Init.class.getDeclaredField("WORLD_ID_LIST");
+            worldIdListField.setAccessible(true);
+        } catch (Exception e) {
+            reflectionFailed = true;
+        }
+    }
+
+    /**
+     * Returns the Data (Simulator) for the given world via reflection.
+     * Accesses Init.main -> Main.simulators -> finds by WORLD_ID_LIST index.
+     */
+    @SuppressWarnings("unchecked")
+    public static Data getDataForWorld(World world) {
+        if (reflectionFailed) return null;
+        try {
+            Object mainInstance = mainField.get(null);
+            if (mainInstance == null) return null;
+
+            if (simulatorsField == null) {
+                simulatorsField = mainInstance.getClass().getDeclaredField("simulators");
+                simulatorsField.setAccessible(true);
+            }
+            Object simulatorsObj = simulatorsField.get(mainInstance);
+            if (simulatorsObj == null) return null;
+
+            Object worldIdListObj = worldIdListField.get(null);
+            if (worldIdListObj == null) return null;
 
             String worldId = Init.getWorldId(world);
-            var worldIdList = InitAccessor.getWorldIdList();
-            int worldIndex = worldIdList.indexOf(worldId);
-            if (worldIndex < 0) return null;
+            if (worldId == null) return null;
 
-            var simulators = ((MainAccessor) (Object) main).getSimulators();
-            if (worldIndex >= simulators.size()) return null;
+            int index = ((List<?>) worldIdListObj).indexOf(worldId);
+            if (index < 0) return null;
 
-            return (Data) simulators.get(worldIndex);
+            Object simulator = ((List<?>) simulatorsObj).get(index);
+            return (Data) simulator;
         } catch (Exception e) {
-            e.printStackTrace();
+            reflectionFailed = true;
             return null;
         }
     }
@@ -72,7 +104,6 @@ public class LoaderImpl {
         return new BlockSettings(net.minecraft.block.AbstractBlock.Settings.create());
     }
 
-    /** Get a block settings forcing it to be solid, as we don't want water to break our block. */
     public static BlockSettings getSolidBlockSettings(BlockSettings settings) {
         #if MC_VERSION >= "12001"
             return new BlockSettings(settings.data.solid());

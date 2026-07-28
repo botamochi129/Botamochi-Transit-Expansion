@@ -1,11 +1,15 @@
 package botamochi129.bte.mapping;
 
+import botamochi129.bte.mod.data.AngleHelper;
 import net.minecraftforge.fml.loading.FMLPaths;
 import org.mtr.core.data.Data;
 import org.mtr.core.tool.Angle;
 import org.mtr.mapping.holder.*;
+import org.mtr.mod.Init;
 
+import java.lang.reflect.Field;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -17,28 +21,68 @@ public class LoaderImpl {
     }
 
     /**
-     * Creates a dynamic Angle instance from degrees.
-     * TODO: Forge equivalent of AngleMixin — for now returns closest existing enum value.
+     * Creates a dynamic Angle instance from degrees via AngleHelper bridge.
      */
     public static Angle createDynamicAngle(String name, int ordinal, float degrees) {
-        Angle closest = Angle.values()[0];
-        float minDiff = Float.MAX_VALUE;
-        for (Angle a : Angle.values()) {
-            float diff = Math.abs(a.angleDegrees - degrees);
-            if (diff < minDiff) {
-                minDiff = diff;
-                closest = a;
+        return AngleHelper.createDynamicAngle(name, ordinal, degrees);
+    }
+
+    private static Field mainField;
+    private static Field simulatorsField;
+    private static Field worldIdListField;
+    private static boolean reflectionFailed = false;
+
+    static {
+        try {
+            mainField = Init.class.getDeclaredField("main");
+            mainField.setAccessible(true);
+
+            Object mainInstance = mainField.get(null);
+            if (mainInstance != null) {
+                simulatorsField = mainInstance.getClass().getDeclaredField("simulators");
+                simulatorsField.setAccessible(true);
             }
+
+            worldIdListField = Init.class.getDeclaredField("WORLD_ID_LIST");
+            worldIdListField.setAccessible(true);
+        } catch (Exception e) {
+            reflectionFailed = true;
         }
-        return closest;
     }
 
     /**
-     * Returns the Data (Simulator) for the given world, or null if unavailable.
-     * TODO: Forge equivalent of InitAccessor/MainAccessor.
+     * Returns the Data (Simulator) for the given world via reflection.
+     * Accesses Init.main -> Main.simulators -> finds by WORLD_ID_LIST index.
      */
+    @SuppressWarnings("unchecked")
     public static Data getDataForWorld(World world) {
-        return null;
+        if (reflectionFailed) return null;
+        try {
+            Object mainInstance = mainField.get(null);
+            if (mainInstance == null) return null;
+
+            if (simulatorsField == null) {
+                simulatorsField = mainInstance.getClass().getDeclaredField("simulators");
+                simulatorsField.setAccessible(true);
+            }
+            Object simulatorsObj = simulatorsField.get(mainInstance);
+            if (simulatorsObj == null) return null;
+
+            Object worldIdListObj = worldIdListField.get(null);
+            if (worldIdListObj == null) return null;
+
+            String worldId = Init.getWorldId(world);
+            if (worldId == null) return null;
+
+            int index = ((List<?>) worldIdListObj).indexOf(worldId);
+            if (index < 0) return null;
+
+            Object simulator = ((List<?>) simulatorsObj).get(index);
+            return (Data) simulator;
+        } catch (Exception e) {
+            reflectionFailed = true;
+            return null;
+        }
     }
 
     /**

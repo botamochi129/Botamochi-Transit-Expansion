@@ -10,6 +10,9 @@ authors = "botamochi129"
 description = ""
 logoFile = "icon.png"
 
+[[mixins]]
+config = "bte.mixins.json"
+
 [[dependencies.bte]]
 modId = "forge"
 mandatory = true

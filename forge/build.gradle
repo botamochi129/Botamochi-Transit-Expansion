@@ -1,6 +1,5 @@
 plugins {
     id "net.minecraftforge.gradle" version "6.0.36"
-    id "org.spongepowered.mixin" version "+"
 }
 
 minecraft {
@@ -9,7 +8,7 @@ minecraft {
         configureEach {
             property "forge.logging.markers", "REGISTRIES"
             property "forge.logging.console.level", "debug"
-            property "ignoreList", "fmlloader,bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client-extra,fmlcore,javafmllanguage,lowcodelanguage,mclanguage,forge-"
+            property "ignoreList", "bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client-extra,fmlcore,javafmllanguage,lowcodelanguage,mclanguage,forge-"
             jvmArg "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED"
             jvmArg "--add-opens=java.base/java.lang=ALL-UNNAMED"
             jvmArg "--add-opens=java.base/java.util=ALL-UNNAMED"
@@ -34,7 +33,6 @@ sourceSets.main.resources { srcDir "src/generated/resources" }
 dependencies {
     minecraft "net.minecraftforge:forge:${rootProject.findProperty("minecraft_version")}-${project.findProperty("forge_version_${rootProject.findProperty("minecraft_version")}")}"
     implementation fg.deobf("maven.modrinth:minecraft-transit-railway:FORGE-${rootProject.findProperty("mtr_version")}+${rootProject.findProperty("minecraft_version")}")
-    annotationProcessor "org.spongepowered:mixin:+:processor"
     annotationProcessor 'systems.manifold:manifold-preprocessor:+'
 
     if(project.merged_mc_version_int >= 11802) {
@@ -43,13 +41,6 @@ dependencies {
         // 1.17 doesn't support JIJ, so shadow it for now until we drop 1.17 (If and when we're gonna do that that is)
         shadowImplementation(group: 'folk.sisby', name: 'kaleido-config', version: "[0.3.3,1.0)")
     }
-}
-
-mixin {
-    add sourceSets.main, "bte.refmap.json"
-    config "bte.mixins.json"
-    debug.verbose = true
-    debug.export = true
 }
 
 // Copy mods.toml into classes dir so Forge finds both declaration and @Mod class in one mod file

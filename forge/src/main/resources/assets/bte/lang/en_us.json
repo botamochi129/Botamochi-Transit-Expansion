@@ -1,2 +1,7 @@
 {
+  "block.bte.straight_node": "Straight Node",
+  "block.bte.straight_node.desc": "Rail node with adjustable angle",
+  "gui.bte.angle_screen.title": "Angle Adjustment",
+  "gui.bte.angle_screen.current": "Current: %d°",
+  "gui.bte.angle_screen.done": "Done"
 }

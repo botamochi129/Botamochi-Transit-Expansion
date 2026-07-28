@@ -3,17 +3,11 @@
   "package": "botamochi129.bte.mixin",
   "compatibilityLevel": "JAVA_16",
   "mixins": [
-    "mtr.AngleMixin",
-    "mtr.BlockNodeMixin",
-    "mtr.ItemNodeModifierBaseMixin",
-    "mtr.ItemRailModifierMixin",
-    "mtr.InitAccessor",
-    "mtr.MainAccessor",
-    "mtr.RailMixin",
-    "mtr.RenderRailsMixin"
+    "mtr.ItemNodeModifierBaseMixin"
   ],
   "client": [
-    "minecraft.NativeImageAccessor"
+    "minecraft.NativeImageAccessor",
+    "mtr.RenderRailsMixin"
   ],
   "injectors": {
     "defaultRequire": 1

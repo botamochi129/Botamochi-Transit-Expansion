@@ -1,2 +1,7 @@
 {
+  "block.bte.straight_node": "直線ノード",
+  "block.bte.straight_node.desc": "任意の角度に設定可能なレールノード",
+  "gui.bte.angle_screen.title": "角度調整",
+  "gui.bte.angle_screen.current": "現在: %d°",
+  "gui.bte.angle_screen.done": "完了"
 }
