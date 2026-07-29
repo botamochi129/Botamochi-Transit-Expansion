@@ -1,28 +1,14 @@
 package botamochi129.bte.mod.data;
 
-import botamochi129.bte.mapping.LoaderImpl;
 import org.mtr.core.tool.Angle;
 
 public class AngleExtra {
 
+    /**
+     * MTR の Angle.fromAngle() は 22.5度スナップのため、
+     * 正確な角度は Bézier カーブの startRad/endRad で保持される
+     */
     public static Angle fromDegrees(double degrees) {
-        float f = (float) ((degrees % 360 + 360) % 360);
-        for (Angle angle : Angle.values()) {
-            if (Math.abs(angle.angleDegrees - f) < 0.001f) {
-                return angle;
-            }
-        }
-        return LoaderImpl.createDynamicAngle("DYN_" + String.format("%.2f", f), -1, f);
-    }
-
-    public static Angle fromRadians(double radians) {
-        double degrees = Math.toDegrees(radians);
-        float f = (float) ((degrees % 360 + 360) % 360);
-        for (Angle angle : Angle.values()) {
-            if (Math.abs(angle.angleDegrees - f) < 0.001f) {
-                return angle;
-            }
-        }
-        return LoaderImpl.createDynamicAngle("DYN_" + String.format("%.2f", f), -1, f);
+        return Angle.fromAngle((float) degrees);
     }
 }

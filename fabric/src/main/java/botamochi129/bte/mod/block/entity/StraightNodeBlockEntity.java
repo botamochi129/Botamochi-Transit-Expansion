@@ -1,19 +1,20 @@
 package botamochi129.bte.mod.block.entity;
 
 import botamochi129.bte.mapping.LoaderImpl;
-import botamochi129.bte.mod.block.StraightNodeBlock;
 import botamochi129.bte.mod.data.AngleExtra;
+import botamochi129.bte.mod.data.IRailMathExtra;
 import botamochi129.bte.mod.registry.Blocks;
 import org.mtr.core.data.Data;
 import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
 import org.mtr.core.tool.Angle;
+import org.mtr.core.tool.Vector;
 import org.mtr.libraries.it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import org.mtr.mapping.holder.BlockPos;
 import org.mtr.mapping.holder.BlockState;
 import org.mtr.mapping.holder.CompoundTag;
-import org.mtr.mapping.holder.Property;
 import org.mtr.mapping.holder.ServerWorld;
+import org.mtr.mapping.holder.World;
 import org.mtr.mapping.mapper.BlockEntityExtension;
 import org.mtr.mod.Init;
 import org.mtr.mod.block.BlockNode;
@@ -24,8 +25,10 @@ import java.util.Map;
 
 public class StraightNodeBlockEntity extends BlockEntityExtension {
 
-    private static final String KEY_ANGLE = "angle_degrees";
-    private static final double UNBOUND_SENTINEL = -114514.0;
+    private static final String KEY_ANGLE = "angle";
+    private static final double UNBOUND_SENTINEL = -129129.0D;
+
+    // 内部データは 0〜360度 で管理する（技術的に必須）
     private double angleDegrees = UNBOUND_SENTINEL;
 
     public StraightNodeBlockEntity(BlockPos pos, BlockState state) {
@@ -41,12 +44,6 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         return angleDegrees;
     }
 
-    public void setAngleDegrees(double angleDegrees) {
-        this.angleDegrees = normalize(angleDegrees);
-        markDirty2();
-        syncBlockState();
-    }
-
     public Angle getAngle() {
         if (!isBound()) return null;
         return AngleExtra.fromDegrees(angleDegrees);
@@ -56,154 +53,209 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         return angleDegrees != UNBOUND_SENTINEL;
     }
 
-    public void bind(StraightNodeBlockEntity other) {
-        if (isBound()) return;
-        BlockPos thi = getPos2();
-        BlockPos oth = other.getPos2();
-        bind(Math.toDegrees(Math.atan2(oth.getZ() - thi.getZ(), oth.getX() - thi.getX())));
-        other.bind(this);
-    }
-
-    public void bind(double angle) {
-        angle = normalize(angle);
-        this.angleDegrees = angle;
-        markDirty2();
-        syncBlockState();
-    }
-
-    public void unbind() {
-        if (!isBound()) return;
-        angleDegrees = UNBOUND_SENTINEL;
-        markDirty2();
-        syncBlockState();
-    }
-
     public boolean isConnected() {
-        org.mtr.mapping.holder.World world = getWorld2();
+        World world = getWorld2();
         if (world == null) return false;
         BlockState state = world.getBlockState(getPos2());
         return IBlock.getStatePropertySafe(state, BlockNode.IS_CONNECTED);
     }
 
-    private void syncBlockState() {
-        org.mtr.mapping.holder.World world = getWorld2();
-        if (world == null || world.isClient()) return;
-        BlockPos pos = getPos2();
-        BlockState state = world.getBlockState(pos);
-        if (!(state.getBlock().data instanceof StraightNodeBlock)) return;
-        int blockAngle = StraightNodeBlock.getAngle2(state);
-        int targetAngle = isBound() ? (int) Math.round(angleDegrees) : 0;
-        if (blockAngle != targetAngle) {
-            world.setBlockState(pos, StraightNodeBlock.setAngle(state, targetAngle));
+    public void bind(StraightNodeBlockEntity other) {
+        BlockPos thi = getPos2();
+        BlockPos oth = other.getPos2();
+
+        boolean selfBound = this.isBound();
+        boolean otherBound = other.isBound();
+
+        if (!selfBound && !otherBound) {
+            double straightAngle = calculateStraightAngle(thi, oth);
+            this.bind(straightAngle);
+            other.bind(straightAngle);
+        } else if (!selfBound && otherBound) {
+            double smoothAngle = calculateSmoothCurveAngle(oth, other.getAngleDegrees(), thi);
+            this.bind(smoothAngle);
+        } else if (selfBound && !otherBound) {
+            double smoothAngle = calculateSmoothCurveAngle(thi, this.getAngleDegrees(), oth);
+            other.bind(smoothAngle);
+        } else {
+            this.updateRailwayData();
+            other.updateRailwayData();
         }
     }
 
-    public void updateConnectedRails() {
-        if (!isBound()) return;
-        org.mtr.mapping.holder.World world = getWorld2();
-        if (world == null || world.isClient()) return;
+    private static double calculateStraightAngle(BlockPos pos1, BlockPos pos2) {
+        double dx = pos2.getX() - pos1.getX();
+        double dz = pos2.getZ() - pos1.getZ();
+        double deg = Math.toDegrees(Math.atan2(dz, dx));
+        return normalize(deg);
+    }
 
-        Data data = getDataForWorld(world);
+    private static double calculateSmoothCurveAngle(BlockPos fixedPos, double fixedAngleDeg, BlockPos targetPos) {
+        double dx = targetPos.getX() - fixedPos.getX();
+        double dz = targetPos.getZ() - fixedPos.getZ();
+        double lineAngleRad = Math.atan2(dz, dx);
+
+        double fixedAngleRad = Math.toRadians(fixedAngleDeg);
+        double alpha = fixedAngleRad - lineAngleRad;
+
+        double targetAngleRad = lineAngleRad - alpha;
+        return normalize(Math.toDegrees(targetAngleRad));
+    }
+
+    public void bind(double angle) {
+        this.angleDegrees = normalize(angle);
+        markDirty2();
+        syncBlockEntity();
+        updateRailwayData();
+    }
+
+    public void unbind() {
+        if (isConnected()) return;
+        this.angleDegrees = UNBOUND_SENTINEL;
+        markDirty2();
+        syncBlockEntity();
+    }
+
+    public void updateRailwayData() {
+        World world = getWorld2();
+        if (world == null || world.isClient() || !isBound() || !isConnected()) return;
+
+        Data data = LoaderImpl.getDataForWorld(world);
         if (data == null) return;
 
-        Position nodePos = Init.blockPosToPosition(getPos2());
-        Angle newAngle = getAngle();
-        if (newAngle == null) return;
+        Position fromPos = Init.blockPosToPosition(getPos2());
+        Map<Position, Rail> map = data.positionsToRail.get(fromPos);
+        if (map == null) return;
 
-        Map<Position, Rail> railsAtPos = data.positionsToRail.get(nodePos);
-        if (railsAtPos == null) return;
+        ServerWorld serverWorld = LoaderImpl.toServerWorld(world);
+        if (serverWorld == null) return;
 
-        for (Map.Entry<Position, Rail> entry : railsAtPos.entrySet()) {
-            Position otherPos = entry.getKey();
+        for (Map.Entry<Position, Rail> entry : map.entrySet()) {
+            Position targetPos = entry.getKey();
             Rail oldRail = entry.getValue();
-            Rail newRail = createUpdatedRail(oldRail, nodePos, otherPos, newAngle);
-            if (newRail != null) {
-                ServerWorld sw = LoaderImpl.toServerWorld(world);
-                if (sw != null) {
-                    PacketUpdateData.sendDirectlyToServerRail(sw, newRail);
-                }
+
+            BlockPos targetBlockPos = Init.positionToBlockPos(targetPos);
+            org.mtr.mapping.holder.BlockEntity rawBe = world.getBlockEntity(targetBlockPos);
+
+            double targetDeg;
+            if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity straightBe && straightBe.isBound()) {
+                targetDeg = straightBe.getAngleDegrees();
+            } else {
+                BlockState state = world.getBlockState(targetBlockPos);
+                targetDeg = BlockNode.getAngle(state);
+            }
+
+            double selfDeg = getAngleDegrees();
+
+            float geoAngle = (float) Math.toDegrees(Math.atan2(targetPos.getZ() - fromPos.getZ(), targetPos.getX() - fromPos.getX()));
+            float reverseGeoAngle = (float) Math.toDegrees(Math.atan2(fromPos.getZ() - targetPos.getZ(), fromPos.getX() - targetPos.getX()));
+
+            double correctedSelfDeg = Angle.similarFacing((float) selfDeg, geoAngle) ? selfDeg : selfDeg + 180;
+            double correctedTargetDeg = Angle.similarFacing((float) targetDeg, reverseGeoAngle) ? targetDeg : targetDeg + 180;
+
+            Angle angleFrom = AngleExtra.fromDegrees(correctedSelfDeg);
+            Angle angleTarget = AngleExtra.fromDegrees(correctedTargetDeg);
+
+            // 【修正】ご提示いただいた 15引数の newRail メソッドに完全一致させる
+            Rail updatedRail = createUpdatedRail(fromPos, angleFrom, targetPos, angleTarget, oldRail);
+
+            if (updatedRail != null && updatedRail.railMath != null && updatedRail.railMath instanceof IRailMathExtra mathExtra) {
+                double startRad = Math.toRadians(correctedSelfDeg);
+                double endRad = Math.toRadians(correctedTargetDeg);
+
+                // 【修正】MTR のレール計算はブロック中心 (+0.5) を基準にするため、ここでオフセットを適用する
+                Vector startVec = new Vector(fromPos.getX() + 0.5, fromPos.getY(), fromPos.getZ() + 0.5);
+                Vector endVec = new Vector(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5);
+
+                mathExtra.bte$enableBezier(startVec, startRad, endVec, endRad);
+
+                data.rails.remove(oldRail);
+                data.rails.add(updatedRail);
+                data.positionsToRail.get(fromPos).put(targetPos, updatedRail);
+                data.positionsToRail.get(targetPos).put(fromPos, updatedRail);
+            }
+
+            PacketUpdateData.sendDirectlyToServerRail(serverWorld, updatedRail);
+        }
+
+        syncBlockEntity();
+    }
+
+    private void syncBlockEntity() {
+        World world = getWorld2();
+        if (world != null && !world.isClient()) {
+            ServerWorld sw = LoaderImpl.toServerWorld(world);
+            if (sw != null) {
+                sw.getChunkManager().markForUpdate(getPos2());
             }
         }
     }
 
-    private Rail createUpdatedRail(Rail oldRail, Position nodePos, Position otherPos, Angle newAngle) {
-        org.mtr.mapping.holder.World world = getWorld2();
-        if (world == null) return null;
-
-        BlockPos otherBlockPos = Init.positionToBlockPos(otherPos);
-        BlockState otherState = world.getBlockState(otherBlockPos);
-        Angle otherAngle;
-        if (otherState.getBlock().data instanceof StraightNodeBlock) {
-            double otherDeg = StraightNodeBlock.getAngle2(otherState);
-            org.mtr.mapping.holder.BlockEntity rawBe = world.getBlockEntity(otherBlockPos);
-            if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity snbe && snbe.isBound()) {
-                otherDeg = snbe.getAngleDegrees();
-            }
-            otherAngle = AngleExtra.fromDegrees(otherDeg);
-        } else {
-            otherAngle = AngleExtra.fromDegrees(BlockNode.getAngle(otherState));
+    /**
+     * RailSchema の canHaveSignal フィールドをリフレクションで取得する
+     * Rail クラスにゲッターが公開されていない場合のフォールバック
+     */
+    private static boolean getCanHaveSignal(Rail rail) {
+        try {
+            // RailSchema の canHaveSignal フィールドにアクセス
+            java.lang.reflect.Field field = rail.getClass().getSuperclass().getDeclaredField("canHaveSignal");
+            field.setAccessible(true);
+            return field.getBoolean(rail);
+        } catch (Exception e) {
+            return true;
         }
+    }
 
-        float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
-                otherPos.getZ() - nodePos.getZ(),
-                otherPos.getX() - nodePos.getX()
-        ));
-        float reverseGeoAngleDeg = (float) Math.toDegrees(Math.atan2(
-                nodePos.getZ() - otherPos.getZ(),
-                nodePos.getX() - otherPos.getX()
-        ));
-
-        float nodeDeg = newAngle.angleDegrees;
-        float correctedNodeDeg = Angle.similarFacing(nodeDeg, geoAngleDeg) ? nodeDeg : nodeDeg + 180;
-        Angle correctedNodeAngle = AngleExtra.fromDegrees(correctedNodeDeg);
-
-        float otherDegF = otherAngle.angleDegrees;
-        float correctedOtherDeg = Angle.similarFacing(otherDegF, reverseGeoAngleDeg) ? otherDegF : otherDegF + 180;
-        Angle correctedOtherAngle = AngleExtra.fromDegrees(correctedOtherDeg);
-
-        double nodeSpeedMs = oldRail.getSpeedLimitMetersPerMillisecond(nodePos);
-        double otherSpeedMs = oldRail.getSpeedLimitMetersPerMillisecond(otherPos);
-        long nodeSpeedKmh = (long) Math.floor(nodeSpeedMs * 3600);
-        long otherSpeedKmh = (long) Math.floor(otherSpeedMs * 3600);
-
-        return Rail.newRail(
-                nodePos, correctedNodeAngle, otherPos, correctedOtherAngle,
-                oldRail.railMath.getShape(),
-                oldRail.railMath.getVerticalRadius(),
-                new ObjectArrayList<>(oldRail.getStyles()),
-                nodeSpeedKmh, otherSpeedKmh,
-                oldRail.isPlatform(),
-                oldRail.isSiding(),
-                oldRail.canAccelerate(),
-                oldRail.canTurnBack(),
-                oldRail.canConnectRemotely(),
-                oldRail.getTransportMode()
-        );
+    /**
+     * 【修正】ご提示いただいた 15引数の Rail.newRail シグネチャに完全一致
+     */
+    private Rail createUpdatedRail(Position fromPos, Angle angleFrom, Position targetPos, Angle angleTarget, Rail origin) {
+        try {
+            return Rail.newRail(
+                    fromPos, angleFrom,
+                    targetPos, angleTarget,
+                    origin.railMath.getShape(),
+                    origin.railMath.getVerticalRadius(),
+                    new ObjectArrayList<>(origin.getStyles()),
+                    (long) Math.round(origin.getSpeedLimitMetersPerMillisecond(fromPos) * 3600000.0),
+                    (long) Math.round(origin.getSpeedLimitMetersPerMillisecond(targetPos) * 3600000.0),
+                    origin.isPlatform(),
+                    origin.isSiding(),
+                    origin.canAccelerate(),
+                    origin.canConnectRemotely(),
+                    getCanHaveSignal(origin),
+                    origin.getTransportMode()
+            );
+        } catch (Exception e) {
+            System.err.println("[BTE Error] Failed to create updated rail: " + e.getMessage());
+            return null;
+        }
     }
 
     @Override
     public void readCompoundTag(CompoundTag tag) {
+        super.readCompoundTag(tag);
         if (tag.contains(KEY_ANGLE)) {
-            angleDegrees = tag.getDouble(KEY_ANGLE);
+            this.angleDegrees = tag.getDouble(KEY_ANGLE);
         } else {
-            angleDegrees = UNBOUND_SENTINEL;
+            this.angleDegrees = UNBOUND_SENTINEL;
         }
     }
 
     @Override
     public void writeCompoundTag(CompoundTag tag) {
+        super.writeCompoundTag(tag);
         if (isBound()) {
             tag.putDouble(KEY_ANGLE, angleDegrees);
         }
     }
 
+    /**
+     * 内部データは 0〜360度 で正規化する（similarFacing 補正のために必須）
+     */
     public static double normalize(double angle) {
-        while (angle < 0) angle += 180D;
-        while (angle >= 180) angle -= 180D;
+        angle = angle % 360.0D;
+        if (angle < 0) angle += 360.0D;
         return angle;
-    }
-
-    private static Data getDataForWorld(org.mtr.mapping.holder.World world) {
-        return LoaderImpl.getDataForWorld(world);
     }
 }

@@ -10,7 +10,11 @@ import org.mtr.mod.render.StoredMatrixTransformations;
 
 public class StraightNodeBlockEntityRenderer extends BlockEntityRenderer<StraightNodeBlockEntity> {
 
-    private static final ModelSmallCube MODEL = new ModelSmallCube(new Identifier("bte", "textures/block/straight_node.png"));
+    private static final Identifier TEXTURE_WOOD = new Identifier("minecraft", "textures/block/oak_log.png");
+    private static final Identifier TEXTURE_METAL = new Identifier("mtr", "textures/block/metal.png");
+
+    private static final ModelSmallCube CUBE_WOOD = new ModelSmallCube(TEXTURE_WOOD);
+    private static final ModelSmallCube CUBE_METAL = new ModelSmallCube(TEXTURE_METAL);
 
     public StraightNodeBlockEntityRenderer(Argument argument) {
         super(argument);
@@ -24,21 +28,58 @@ public class StraightNodeBlockEntityRenderer extends BlockEntityRenderer<Straigh
         final boolean connected = entity.isConnected();
 
         float yawDegrees;
-        if (bound && connected) {
-            yawDegrees = (float) (90 - angleDeg);
-        } else if (bound) {
-            yawDegrees = (float) -angleDeg;
+        if (bound) {
+            yawDegrees = (float) ((angleDeg - 90 + 360) % 360);
         } else {
-            yawDegrees = (float) ((System.currentTimeMillis() / 1000.0 * 360) % 360);
+            yawDegrees = (float) ((System.currentTimeMillis() % 36000L) / 10.0D);
         }
 
+        if (!connected) {
+            renderNode(pos, yawDegrees, light);
+        }
+    }
+
+    private void renderNode(BlockPos pos, float yawDegrees, int light) {
+        // JSON model: element [from, to] (0~16)
+        renderElement(pos, yawDegrees, light, CUBE_WOOD,  0, 0, 6,  16, 1, 10);
+        renderElement(pos, yawDegrees, light, CUBE_METAL, 1, 1, 7,   2,12,  9);
+        renderElement(pos, yawDegrees, light, CUBE_METAL,14, 1, 7,  15,12,  9);
+        renderElement(pos, yawDegrees, light, CUBE_METAL, 0,12, 7.5, 16,16,8.5);
+    }
+
+    private void renderElement(BlockPos pos, float yawDegrees, int light, ModelSmallCube cube,
+                               double minX, double minY, double minZ,
+                               double maxX, double maxY, double maxZ) {
+
+        // ブロックの中心 (X+0.5, Y+0.5, Z+0.5) を全体の基準原点にする
         StoredMatrixTransformations transforms = new StoredMatrixTransformations(
-                pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5
+                pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D
         );
-        transforms.add(graphicsHolder1 -> {
-            graphicsHolder1.translate(0, 0.5, 0);
-            graphicsHolder1.rotateYDegrees(yawDegrees);
+
+        // ModelSmallCube は 8x8x8 サイズなので、目標サイズを 8.0 で割る
+        float scaleX = (float) ((maxX - minX) / 8.0D);
+        float scaleY = (float) ((maxY - minY) / 8.0D);
+        float scaleZ = (float) ((maxZ - minZ) / 8.0D);
+
+        // ブロック中心 (8, 8, 8) から見たパーツ中心の位置オフセット (16で割って0~1の空間へ)
+        double offsetX = ((minX + maxX) / 2.0D - 8.0D) / 16.0D;
+        double offsetY = ((minY + maxY) / 2.0D - 8.0D) / 16.0D;
+        double offsetZ = ((minZ + maxZ) / 2.0D - 8.0D) / 16.0D;
+
+        transforms.add(g -> {
+            // 1. ブロック中心軸で回転
+            g.rotateYDegrees(yawDegrees);
+
+            // 2. パーツごとの中心位置へ移動
+            g.translate(offsetX, offsetY, offsetZ);
+
+            // 3. パーツの大きさにスケール
+            g.scale(scaleX, scaleY, scaleZ);
+
+            // 4. ModelSmallCube の元々の中心 (0.5, 0.5, 0.5) を原点に移動してスケールを効かせる
+            g.translate(-0.5D, -0.5D, -0.5D);
         });
-        MODEL.render(transforms, light);
+
+        cube.render(transforms, light);
     }
 }
