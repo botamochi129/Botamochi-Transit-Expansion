@@ -20,13 +20,9 @@ import java.util.function.BooleanSupplier;
 @Mixin(value = RenderRails.class, remap = false)
 public abstract class RenderRailsNodeRotationMixin {
 
-    // RenderRails クラス内の private static フィールドにアクセスするための Shadow
     @Shadow
     private static ModelSmallCube MODEL_SMALL_CUBE;
 
-    /**
-     * renderNode メソッドの先頭でフックし、StraightNodeBlockEntity の場合に独自の描画処理を実行する
-     */
     @Inject(method = "renderNode", at = @At("HEAD"), cancellable = true)
     private static void bte$renderCustomNode(
             BlockState blockState,
@@ -35,17 +31,14 @@ public abstract class RenderRailsNodeRotationMixin {
             int light,
             CallbackInfo ci
     ) {
-        // 元の条件式を踏襲
         if (blockState.getBlock().data instanceof org.mtr.mod.block.BlockNode && shouldRender.getAsBoolean()) {
             ClientWorld world = MinecraftClient.getInstance().getWorldMapped();
 
             if (world != null) {
                 BlockEntity be = world.getBlockEntity(blockPos);
 
-                // StraightNodeBlockEntity かつ バインド済みの場合
                 if (be != null && be.data instanceof StraightNodeBlockEntity nodeBe && nodeBe.isBound()) {
 
-                    // 独自の描画変換行列を構築
                     final StoredMatrixTransformations storedMatrixTransformations = new StoredMatrixTransformations(
                             blockPos.getX() + 0.5,
                             blockPos.getY(),
@@ -53,16 +46,18 @@ public abstract class RenderRailsNodeRotationMixin {
                     );
 
                     storedMatrixTransformations.add(graphicsHolder -> {
-                        // 【ここが核心】自由角度 (double) で回転させる
-                        graphicsHolder.rotateYDegrees((float) nodeBe.getAngleDegrees());
+                        // 【最終修正】スライダーを右に動かしたとき、モデルも右回り（時計回り）に回転するようにする
+                        // MTRノードモデルのデフォルトは「北」を向いている。
+                        // 東(0°)を向かせるには、右回りに90°回転させる必要がある。
+                        // Minecraftの rotateYDegrees は正の値で「左回り」なので、右回りに90°回転させるには -90.0F を指定する。
+                        float renderAngle = -(float) nodeBe.getAngleDegrees() - 90.0F;
+
+                        graphicsHolder.rotateYDegrees(renderAngle);
                         graphicsHolder.scale(4, 0.5F, 0.5F);
                         graphicsHolder.translate(-0.5, 0, -0.5);
                     });
 
-                    // Shadow で取得したモデルを描画
                     MODEL_SMALL_CUBE.render(storedMatrixTransformations, light);
-
-                    // 元の MTR 標準の描画処理 (22.5度スナップ処理) をキャンセル
                     ci.cancel();
                 }
             }

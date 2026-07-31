@@ -7,27 +7,30 @@ import botamochi129.bte.mod.registry.BTERegistryClient;
 import org.mtr.core.data.Data;
 import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
-import org.mtr.mod.Init;
-import org.mtr.mapping.holder.BlockEntity;
-import org.mtr.mapping.holder.BlockPos;
-import org.mtr.mapping.holder.ClickableWidget;
-import org.mtr.mapping.holder.Text;
-import org.mtr.mapping.holder.World;
-import org.mtr.mapping.mapper.ButtonWidgetExtension;
-import org.mtr.mapping.mapper.CheckboxWidgetExtension;
-import org.mtr.mapping.mapper.GraphicsHolder;
-import org.mtr.mapping.mapper.ScreenExtension;
-import org.mtr.mapping.mapper.SliderWidgetExtension;
-import org.mtr.mapping.mapper.TextFieldWidgetExtension;
+import org.mtr.core.operation.UpdateDataRequest;
+import org.mtr.core.tool.Utilities;
+import org.mtr.libraries.it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import org.mtr.mapping.holder.*;
+import org.mtr.mapping.mapper.*;
 import org.mtr.mapping.tool.TextCase;
+import org.mtr.mod.Init;
+import org.mtr.mod.InitClient;
+import org.mtr.mod.client.MinecraftClientData;
+import org.mtr.mod.generated.lang.TranslationProvider;
+import org.mtr.mod.packet.PacketUpdateData;
+import org.mtr.mod.screen.RailStyleSelectorScreen;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public class StraightNodeAngleScreen extends ScreenExtension {
 
     private static final double UNBOUND_SENTINEL = -129129.0D;
+    private static final int SQUARE_SIZE = 20;
+    private static final int TEXT_PADDING = 4;
+    private static final int TEXT_FIELD_PADDING = 4;
 
     private final BlockPos blockPos;
     private final World world;
@@ -36,14 +39,27 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private boolean isConnected;
     private double currentAngle;
 
+    // 角度調整用UI
     private ButtonWidgetExtension btnReturn;
     private ButtonWidgetExtension btnMode;
     private ButtonWidgetExtension btnUnbind;
     private CheckboxWidgetExtension chkExactMode;
-
     private SliderWidgetExtension slider;
     private TextFieldWidgetExtension textField;
     private boolean sliderMode = true;
+
+    // レール属性調整用UI
+    private Rail.Shape currentShape = Rail.Shape.QUADRATIC;
+    private double currentRadius = 0.0;
+    private double maxRadius = 0.0;
+
+    private ButtonWidgetExtension btnShape;
+    private ButtonWidgetExtension btnStyle;
+    private ButtonWidgetExtension btnStyleFlip;
+
+    private TextFieldWidgetExtension textFieldRadius;
+    private ButtonWidgetExtension btnMinus10, btnMinus1, btnMinus01;
+    private ButtonWidgetExtension btnPlus01, btnPlus1, btnPlus10;
 
     private static final double SIMPLE_MAX_ANGLE = 180.0;
     private static final double SIMPLE_MIN_ANGLE = 0.0;
@@ -53,7 +69,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private boolean isExactMode = false;
 
     public StraightNodeAngleScreen(BlockPos blockPos, World world) {
-        super("Straight Node Angle");
+        super("Straight Node Configuration");
         this.blockPos = blockPos;
         this.world = world;
 
@@ -74,22 +90,26 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         super.init2();
         int cx = getWidthMapped() / 2;
         int cy = getHeightMapped() / 2;
-        int w = Math.min(getWidthMapped() - 40, 380);
+        // 【修正】横幅を少し抑えて、小さな画面でもはみ出ないようにする
+        int w = Math.min(getWidthMapped() - 40, 340);
 
+        updateRailPropsFromConnected();
         double initialDisplay = getInitialDisplayAngle();
 
+        // === 1. 基本ボタン (下部に集約) ===
         btnReturn = new ButtonWidgetExtension(20, 20, 20, 20, "X", btn -> onClose2());
         addChild(new ClickableWidget(btnReturn));
 
-        btnMode = new ButtonWidgetExtension(cx + w / 2 - 40, cy + 80, 40, 20, "⇄", btn -> switchMode());
+        // cy + 85 に配置して縦幅を圧縮
+        btnMode = new ButtonWidgetExtension(cx + w / 2 - 40, cy + 85, 40, 20, "⇄", btn -> switchMode());
         addChild(new ClickableWidget(btnMode));
 
-        btnUnbind = new ButtonWidgetExtension(cx - w / 2, cy + 80, 80, 20, "Unbind", btn -> unbind());
+        btnUnbind = new ButtonWidgetExtension(cx - w / 2, cy + 85, 80, 20, TextHelper.literal("Unbind"), btn -> unbind());
         btnUnbind.setActiveMapped(isBound);
         addChild(new ClickableWidget(btnUnbind));
 
         chkExactMode = new CheckboxWidgetExtension(
-                cx - w / 2 + 90, cy + 85, 200, 20,
+                cx - w / 2 + 90, cy + 90, 200, 20,
                 "Exact Angle",
                 isExactMode,
                 isChecked -> {
@@ -99,8 +119,9 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         );
         addChild(new ClickableWidget(chkExactMode));
 
-        // 【修正】初期メッセージとして角度を表示
-        slider = new SliderWidgetExtension(cx - w / 2, cy + 20, w, 20, String.format("%.1f°", initialDisplay)) {
+        // === 2. 角度調整セクション (上部に配置) ===
+        // cy - 10 から開始し、高さを詰める
+        slider = new SliderWidgetExtension(cx - w / 2, cy - 10, w, 20, String.format("%.1f°", initialDisplay)) {
             @Override
             public void applyValue2() {
                 double val = this.getValueMapped();
@@ -114,31 +135,173 @@ public class StraightNodeAngleScreen extends ScreenExtension {
                     isBound = true;
                     currentAngle = newInternalAngle;
 
-                    // 【修正】スライダー操作中にボタン上へ角度をリアルタイム表示
-                    this.setMessage2(Text.of(String.format("%.1f°", newUIAngle)));
+                    double displayAngle = isExactMode ? toExactUI(newInternalAngle) : toSimpleUI(newInternalAngle);
+                    this.setMessage2(Text.of(String.format("%.1f°", displayAngle)));
+                    textField.setText2(String.format("%.1f", displayAngle));
 
-                    // テキストフィールド側も内部状態として同期
-                    textField.setText2(String.format("%.1f", newUIAngle));
                     updateUIState();
                     apply();
                 }
             }
-
             @Override
-            protected void updateMessage2() {
-            }
+            protected void updateMessage2() {}
         };
+        slider.setValueMapped(getSliderValueFromAngle(initialDisplay));
         slider.setActiveMapped(true);
         addChild(new ClickableWidget(slider));
 
-        textField = new TextFieldWidgetExtension(cx - w / 2, cy + 20, w, 20,
+        textField = new TextFieldWidgetExtension(cx - w / 2, cy - 10, w, 20,
                 isBound ? String.format("%.1f", initialDisplay) : "0.0",
                 7, TextCase.DEFAULT, null, null);
         textField.setChangedListener2(this::onTextChanged);
         addChild(new ClickableWidget(textField));
 
+        // === 3. レール属性調整セクション (Rail Properties) ===
+        int railY = cy + 25; // 角度調整のすぐ下
+
+        int btnW = w / 3;
+        // 【修正】MTR標準の翻訳キーを使用
+        btnShape = new ButtonWidgetExtension(cx - w / 2, railY, btnW, SQUARE_SIZE, TextHelper.literal(""), btn -> {
+            currentShape = currentShape == Rail.Shape.QUADRATIC ? Rail.Shape.TWO_RADII : Rail.Shape.QUADRATIC;
+            updateRailProperties(currentRadius, true);
+        });
+        addChild(new ClickableWidget(btnShape));
+
+        btnStyle = new ButtonWidgetExtension(cx - w / 2 + btnW, railY, btnW, SQUARE_SIZE, TranslationProvider.GUI_MTR_RAIL_STYLES.getMutableText(), btn -> {
+            List<Rail> rails = findConnectedRails();
+            if (!rails.isEmpty()) {
+                MinecraftClient.getInstance().openScreen(new Screen(RailStyleSelectorScreen.create(rails.get(0))));
+            }
+        });
+        addChild(new ClickableWidget(btnStyle));
+
+        btnStyleFlip = new ButtonWidgetExtension(cx - w / 2 + btnW * 2, railY, btnW, SQUARE_SIZE, TranslationProvider.GUI_MTR_FLIP_STYLES.getMutableText(), btn -> {
+            flipStyles();
+        });
+        addChild(new ClickableWidget(btnStyleFlip));
+
+        // Radius 調整
+        int radiusY = railY + SQUARE_SIZE + TEXT_FIELD_PADDING; // cy + 49
+        int radiusBtnW = SQUARE_SIZE * 2; // 40
+        int textFieldW = w - radiusBtnW * 6 - TEXT_FIELD_PADDING; // 340 - 240 - 4 = 96 (十分な幅)
+
+        textFieldRadius = new TextFieldWidgetExtension(cx - w / 2, radiusY, textFieldW, SQUARE_SIZE, 256, TextCase.DEFAULT, "[^\\d\\.]", "0");
+        addChild(new ClickableWidget(textFieldRadius));
+
+        btnMinus10 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + TEXT_FIELD_PADDING, radiusY, radiusBtnW, SQUARE_SIZE, TextHelper.literal("-10"), btn -> updateRailProperties(currentRadius - 10, true));
+        btnMinus1 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + TEXT_FIELD_PADDING + radiusBtnW, radiusY, radiusBtnW, SQUARE_SIZE, TextHelper.literal("-1"), btn -> updateRailProperties(currentRadius - 1, true));
+        btnMinus01 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + TEXT_FIELD_PADDING + radiusBtnW * 2, radiusY, radiusBtnW, SQUARE_SIZE, TextHelper.literal("-0.1"), btn -> updateRailProperties(currentRadius - 0.1, true));
+
+        btnPlus01 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + TEXT_FIELD_PADDING + radiusBtnW * 3, radiusY, radiusBtnW, SQUARE_SIZE, TextHelper.literal("+0.1"), btn -> updateRailProperties(currentRadius + 0.1, true));
+        btnPlus1 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + TEXT_FIELD_PADDING + radiusBtnW * 4, radiusY, radiusBtnW, SQUARE_SIZE, TextHelper.literal("+1"), btn -> updateRailProperties(currentRadius + 1, true));
+        btnPlus10 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + TEXT_FIELD_PADDING + radiusBtnW * 5, radiusY, radiusBtnW, SQUARE_SIZE, TextHelper.literal("+10"), btn -> updateRailProperties(currentRadius + 10, true));
+
+        addChild(new ClickableWidget(btnMinus10));
+        addChild(new ClickableWidget(btnMinus1));
+        addChild(new ClickableWidget(btnMinus01));
+        addChild(new ClickableWidget(btnPlus01));
+        addChild(new ClickableWidget(btnPlus1));
+        addChild(new ClickableWidget(btnPlus10));
+
+        textFieldRadius.setChangedListener2(text -> {
+            try {
+                double newRadius = Double.parseDouble(text);
+                if (Math.abs(newRadius - currentRadius) > 0.001) {
+                    updateRailProperties(newRadius, true);
+                }
+            } catch (Exception ignored) {}
+        });
+
         applyModeVisibility();
         updateModeUI();
+        updateRailProperties(currentRadius, false);
+    }
+
+    private void flipStyles() {
+        List<Rail> connectedRails = findConnectedRails();
+        if (connectedRails.isEmpty()) return;
+
+        UpdateDataRequest request = new UpdateDataRequest(MinecraftClientData.getInstance());
+        for (Rail oldRail : connectedRails) {
+            final ObjectArrayList<String> styles = oldRail.getStyles().stream().map(style -> {
+                final boolean isForwards = style.endsWith("_1");
+                final boolean isBackwards = style.endsWith("_2");
+                if (isForwards || isBackwards) {
+                    return style.substring(0, style.length() - 1) + (isForwards ? "2" : "1");
+                } else {
+                    return style;
+                }
+            }).collect(Collectors.toCollection(ObjectArrayList::new));
+
+            request.addRail(Rail.copy(oldRail, styles));
+        }
+        InitClient.REGISTRY_CLIENT.sendPacketToServer(new PacketUpdateData(request));
+
+        if (isBound) {
+            BTERegistryClient.sendPacketToServer(new PacketUpdateStraightNodeAngle(blockPos, currentAngle));
+        }
+    }
+
+    private void updateRailPropsFromConnected() {
+        List<Rail> connectedRails = findConnectedRails();
+        if (!connectedRails.isEmpty()) {
+            Rail firstRail = connectedRails.get(0);
+            currentShape = firstRail.railMath.getShape();
+            currentRadius = firstRail.railMath.getVerticalRadius();
+            maxRadius = firstRail.railMath.getMaxVerticalRadius();
+        } else {
+            currentShape = Rail.Shape.QUADRATIC;
+            currentRadius = 0.0;
+            maxRadius = 100.0;
+        }
+    }
+
+    private void updateRailProperties(double newRadius, boolean sendPacket) {
+        // 【修正】MTR標準の翻訳キーを使用
+        btnShape.setMessage2(Text.cast((currentShape == Rail.Shape.QUADRATIC ? TranslationProvider.GUI_MTR_RAIL_SHAPE_QUADRATIC : TranslationProvider.GUI_MTR_RAIL_SHAPE_TWO_RADII).getMutableText()));
+
+        currentRadius = Utilities.clamp(Utilities.round(newRadius, 2), 0, maxRadius);
+
+        String radiusText = String.valueOf(currentRadius);
+        if (!textFieldRadius.getText2().equals(radiusText)) {
+            textFieldRadius.setText2(radiusText);
+        }
+
+        boolean hasRadiusControls = currentShape != Rail.Shape.QUADRATIC;
+        btnMinus10.setVisibleMapped(hasRadiusControls);
+        btnMinus1.setVisibleMapped(hasRadiusControls);
+        btnMinus01.setVisibleMapped(hasRadiusControls);
+        btnPlus01.setVisibleMapped(hasRadiusControls);
+        btnPlus1.setVisibleMapped(hasRadiusControls);
+        btnPlus10.setVisibleMapped(hasRadiusControls);
+
+        btnMinus10.setActiveMapped(currentRadius > 0);
+        btnMinus1.setActiveMapped(currentRadius > 0);
+        btnMinus01.setActiveMapped(currentRadius > 0);
+        btnPlus01.setActiveMapped(currentRadius < maxRadius);
+        btnPlus1.setActiveMapped(currentRadius < maxRadius);
+        btnPlus10.setActiveMapped(currentRadius < maxRadius);
+
+        if (sendPacket) {
+            applyRailPropertiesToServer();
+        }
+    }
+
+    private void applyRailPropertiesToServer() {
+        List<Rail> connectedRails = findConnectedRails();
+        if (connectedRails.isEmpty()) return;
+
+        UpdateDataRequest request = new UpdateDataRequest(MinecraftClientData.getInstance());
+        for (Rail oldRail : connectedRails) {
+            Rail newRail = Rail.copy(oldRail, currentShape, currentRadius);
+            request.addRail(newRail);
+        }
+
+        InitClient.REGISTRY_CLIENT.sendPacketToServer(new PacketUpdateData(request));
+
+        if (isBound) {
+            BTERegistryClient.sendPacketToServer(new PacketUpdateStraightNodeAngle(blockPos, currentAngle));
+        }
     }
 
     private void switchMode() {
@@ -151,7 +314,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         textField.setVisible2(!sliderMode);
         btnMode.setMessage2(Text.of(sliderMode ? "⇄" : "📝"));
         chkExactMode.setMessage2(Text.of(
-                isExactMode ? "Exact Angle (-180° to 180°)" : "Simple Angle (0° to 180°)"
+                isExactMode ? "Exact Angle (-180° to 180°)" : "Simple Angle (0° to 180°, Auto-select)"
         ));
     }
 
@@ -159,11 +322,11 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         double currentDisplay = isBound ? getInitialDisplayAngle() : 0.0;
         slider.setValueMapped(getSliderValueFromAngle(currentDisplay));
 
-        // 【修正】モード切り替え時などもスライダーの表示を更新
-        slider.setMessage2(Text.of(String.format("%.1f°", currentDisplay)));
+        double safeDisplayAngle = isBound ? (isExactMode ? toExactUI(currentAngle) : toSimpleUI(currentAngle)) : 0.0;
+        slider.setMessage2(Text.of(String.format("%.1f°", safeDisplayAngle)));
 
         if (sliderMode) {
-            textField.setText2(String.format("%.1f", currentDisplay));
+            textField.setText2(String.format("%.1f", safeDisplayAngle));
         }
         applyModeVisibility();
     }
@@ -173,36 +336,10 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         return isExactMode ? toExactUI(currentAngle) : toSimpleUI(currentAngle);
     }
 
-    // 【修正】接続先に対する相対的な曲がり具合 (0〜180度) を返す
-    private double toSimpleUI(double internalAngle) {
-        List<BlockPos> connectedPositions = findConnectedNodePositions();
-        if (connectedPositions.isEmpty()) return 0.0;
-
-        // 簡易モードでは、代表として最初の接続先を基準にする
-        BlockPos target = connectedPositions.get(0);
-        double geoAngle = Math.toDegrees(Math.atan2(
-                target.getZ() - this.blockPos.getZ(),
-                target.getX() - this.blockPos.getX()
-        ));
-        geoAngle = normalize360(geoAngle);
-
-        // 内部角度と幾何学的な方向との差を計算 (0〜180度の範囲に収める)
-        double diff = Math.abs(internalAngle - geoAngle) % 360.0;
-        if (diff > 180.0) diff = 360.0 - diff;
-
-        return diff;
-    }
-
-    private static double toExactUI(double internalAngle) {
-        double angle = internalAngle % 360.0;
-        if (angle > 180.0) angle -= 360.0;
-        return angle;
-    }
-
-    private double getSliderValueFromAngle(double angle) {
+    private double getSliderValueFromAngle(double displayAngle) {
         double min = isExactMode ? EXACT_MIN_ANGLE : SIMPLE_MIN_ANGLE;
         double max = isExactMode ? EXACT_MAX_ANGLE : SIMPLE_MAX_ANGLE;
-        return (angle - min) / (max - min);
+        return (displayAngle - min) / (max - min);
     }
 
     private void onTextChanged(String text) {
@@ -218,11 +355,15 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             if (!isBound || newInternalAngle != currentAngle) {
                 isBound = true;
                 currentAngle = newInternalAngle;
-                slider.setValueMapped(getSliderValueFromAngle(clampedUI));
 
-                // 【修正】テキスト入力時にもスライダー表示を更新
-                slider.setMessage2(Text.of(String.format("%.1f°", clampedUI)));
-                textField.setText2(String.format("%.1f", clampedUI));
+                double displayAngle = isExactMode ? toExactUI(newInternalAngle) : toSimpleUI(newInternalAngle);
+                String formattedText = String.format("%.1f", displayAngle);
+
+                if (!text.equals(formattedText)) {
+                    slider.setValueMapped(getSliderValueFromAngle(displayAngle));
+                    slider.setMessage2(Text.of(String.format("%.1f°", displayAngle)));
+                    textField.setText2(formattedText);
+                }
 
                 updateUIState();
                 apply();
@@ -239,6 +380,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         updateUIState();
         textField.setText2("Unbound");
         slider.setMessage2(Text.of("0.0°"));
+        slider.setValueMapped(0.0);
         BTERegistryClient.sendPacketToServer(new PacketUpdateStraightNodeAngle(blockPos, UNBOUND_SENTINEL));
     }
 
@@ -252,7 +394,9 @@ public class StraightNodeAngleScreen extends ScreenExtension {
 
     private double resolveInternalAngle(double uiAngle) {
         if (isExactMode) {
-            return toInternalFromExact(uiAngle);
+            double angle = uiAngle % 360.0;
+            if (angle < 0.0) angle += 360.0;
+            return angle;
         } else {
             return resolveSimpleAngle(uiAngle);
         }
@@ -264,35 +408,38 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             return simpleUIAngle;
         }
 
-        double baseAngle = isBound ? currentAngle : 0.0;
-        double bestCand = simpleUIAngle;
-        double minTotalDiff = Double.MAX_VALUE;
+        double baseAngle = isBound ? currentAngle : -1;
 
-        for (BlockPos connectedPos : connectedPositions) {
-            double geoAngle = Math.toDegrees(Math.atan2(
-                    connectedPos.getZ() - this.blockPos.getZ(),
-                    connectedPos.getX() - this.blockPos.getX()
-            ));
-            geoAngle = normalize360(geoAngle);
+        double cand1 = normalize360(simpleUIAngle);
+        double cand2 = normalize360(simpleUIAngle + 180.0);
 
-            double cand1 = normalize360(geoAngle + simpleUIAngle);
-            double cand2 = normalize360(geoAngle - simpleUIAngle);
+        double bestCand = cand1;
+        double minScore = Double.MAX_VALUE;
 
-            double diff1 = getAngleDifference(baseAngle, cand1);
-            double diff2 = getAngleDifference(baseAngle, cand2);
+        for (double cand : new double[]{cand1, cand2}) {
+            double score = 0;
+            for (BlockPos connectedPos : connectedPositions) {
+                double geoAngle = Math.toDegrees(Math.atan2(
+                        connectedPos.getZ() - this.blockPos.getZ(),
+                        connectedPos.getX() - this.blockPos.getX()
+                ));
+                geoAngle = normalize360(geoAngle);
 
-            double geoDiff1 = getAngleDifference(geoAngle, cand1);
-            double geoDiff2 = getAngleDifference(geoAngle, cand2);
+                double diff = getAngleDifference(cand, geoAngle);
 
-            double score1 = diff1 + (geoDiff1 > 90.0 ? 180.0 : 0.0);
-            double score2 = diff2 + (geoDiff2 > 90.0 ? 180.0 : 0.0);
-
-            double bestForThisConnection = (score1 <= score2) ? cand1 : cand2;
-            double totalDiff = getAngleDifference(baseAngle, bestForThisConnection);
-
-            if (totalDiff < minTotalDiff) {
-                minTotalDiff = totalDiff;
-                bestCand = bestForThisConnection;
+                if (baseAngle >= 0) {
+                    score += getAngleDifference(cand, baseAngle) * 2.0;
+                } else {
+                    if (diff > 90.0) {
+                        score += 180.0;
+                    } else {
+                        score += diff;
+                    }
+                }
+            }
+            if (score < minScore) {
+                minScore = score;
+                bestCand = cand;
             }
         }
 
@@ -304,8 +451,24 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         return diff > 180.0 ? 360.0 - diff : diff;
     }
 
-    private static double toInternalFromExact(double exactUI) {
-        double angle = exactUI % 360.0;
+    private static double toSimpleUI(double internalAngle) {
+        double angle = internalAngle % 180.0;
+        if (angle < 0.0) {
+            angle += 180.0;
+        }
+        return angle;
+    }
+
+    private static double toExactUI(double internalAngle) {
+        double angle = internalAngle % 360.0;
+        if (angle > 180.0) {
+            angle -= 360.0;
+        }
+        return angle;
+    }
+
+    private static double normalize360(double angle) {
+        angle = angle % 360.0;
         if (angle < 0.0) angle += 360.0;
         return angle;
     }
@@ -325,13 +488,15 @@ public class StraightNodeAngleScreen extends ScreenExtension {
 
         int cx = getWidthMapped() / 2;
         int cy = getHeightMapped() / 2;
+        int w = Math.min(getWidthMapped() - 40, 340);
 
-        graphicsHolder.drawCenteredText("Straight Node Configuration", cx, cy - 40, 0xFFFFFF);
+        // 【修正】Y座標を全体的に上に詰め、はみ出しを防ぐ
+        graphicsHolder.drawCenteredText("Straight Node Configuration", cx, cy - 60, 0xFFFFFF);
 
         String hint = isExactMode
-                ? "Exact: -180°(Right) to 180°(Left), 0°=Straight"
-                : "Simple: 0°(Straight) to 180°(U-Turn), Auto-direction";
-        graphicsHolder.drawCenteredText(hint, cx, cy - 28, 0xAAAAAA);
+                ? "Exact: -180°(West) to 180°(West), 0°=East"
+                : "Simple: 0°(Straight) to 180°(U-Turn), Auto-selects best direction";
+        graphicsHolder.drawCenteredText(hint, cx, cy - 48, 0xAAAAAA);
 
         String status;
         int statusColor;
@@ -345,7 +510,22 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             status = "Status: Unbound";
             statusColor = 0xFF5555;
         }
-        graphicsHolder.drawCenteredText(status, cx, cy - 15, statusColor);
+        graphicsHolder.drawCenteredText(status, cx, cy - 36, statusColor);
+
+        double displayAngle = isBound ? (isExactMode ? toExactUI(currentAngle) : toSimpleUI(currentAngle)) : 0.0;
+        String angleText = isBound
+                ? String.format("Angle: %.1f\u00B0", displayAngle)
+                : "Angle: Unbound";
+        graphicsHolder.drawCenteredText(angleText, cx, cy - 24, 0xFFFFFF);
+
+        // 区切り線
+        GuiDrawing guiDrawing = new GuiDrawing(graphicsHolder);
+        guiDrawing.beginDrawingRectangle();
+        guiDrawing.drawRectangle(cx - w / 2, cy + 15, w, 1, 0x88888888);
+        guiDrawing.finishDrawingRectangle();
+
+        // Rail Properties ラベル
+        graphicsHolder.drawText(TextHelper.literal("Rail Shape, Style & Radius"), cx - w / 2, cy + 20, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
     }
 
     @Override
@@ -374,9 +554,22 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         return result;
     }
 
-    private static double normalize360(double angle) {
-        angle = angle % 360.0;
-        if (angle < 0.0) angle += 360.0;
-        return angle;
+    private List<Rail> findConnectedRails() {
+        List<Rail> result = new ArrayList<>();
+        try {
+            Data data = LoaderImpl.getDataForWorld(world);
+            if (data == null) return result;
+
+            Position currentPos = Init.blockPosToPosition(this.blockPos);
+            if (currentPos == null) return result;
+
+            Map<Position, Rail> connectedMap = data.positionsToRail.get(currentPos);
+            if (connectedMap != null) {
+                result.addAll(connectedMap.values());
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return result;
     }
 }

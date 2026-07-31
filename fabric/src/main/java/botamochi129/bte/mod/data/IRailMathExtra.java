@@ -7,4 +7,5 @@ public interface IRailMathExtra {
     boolean bte$isBezierEnabled();
     double bte$getStartRad();
     double bte$getEndRad();
+    void bte$enableBezier(Vector startPos, double startRad, Vector endPos, double endRad, double verticalRadius);
 }

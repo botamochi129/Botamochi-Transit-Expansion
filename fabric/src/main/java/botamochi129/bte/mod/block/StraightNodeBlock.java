@@ -1,14 +1,24 @@
 package botamochi129.bte.mod.block;
 
+import botamochi129.bte.mapping.LoaderImpl;
 import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
 import botamochi129.bte.mod.client.ClientHelper;
-import botamochi129.bte.mod.screen.StraightNodeAngleScreen;
+import org.mtr.core.data.Data;
+import org.mtr.core.data.Position;
+import org.mtr.core.data.Rail;
+import org.mtr.core.data.TwoPositionsBase;
 import org.mtr.core.data.TransportMode;
 import org.mtr.mapping.holder.*;
 import org.mtr.mapping.mapper.BlockEntityExtension;
 import org.mtr.mapping.mapper.BlockWithEntity;
 import org.mtr.mod.Items;
+import org.mtr.mod.Init;
 import org.mtr.mod.block.BlockNode;
+import org.mtr.mod.client.MinecraftClientData;
+import org.mtr.mod.packet.PacketDeleteData;
+
+import java.util.ArrayList;
+import java.util.Map;
 
 public class StraightNodeBlock extends BlockNode implements BlockWithEntity {
 
@@ -20,15 +30,13 @@ public class StraightNodeBlock extends BlockNode implements BlockWithEntity {
     public ActionResult onUse2(BlockState state, World world, BlockPos pos, PlayerEntity player, Hand hand, BlockHitResult hit) {
         if (player != null && player.isHolding(Items.BRUSH.get())) {
             if (world.isClient()) {
-                // クライアント側でのみ GUI を開く（直参照を避ける）
                 openAngleScreen(pos, world);
             }
-            return ActionResult.SUCCESS; // サーバー側も HANDLED/SUCCESS を返して腕の振りを同期
+            return ActionResult.SUCCESS;
         }
         return super.onUse2(state, world, pos, player, hand, hit);
     }
 
-    // クライアント専用ヘルパー（Separate Client-Only Call）
     private static void openAngleScreen(BlockPos pos, World world) {
         ClientHelper.openAngleScreen(pos, world);
     }
@@ -41,5 +49,63 @@ public class StraightNodeBlock extends BlockNode implements BlockWithEntity {
     @Override
     public BlockRenderType getRenderType2(BlockState state) {
         return BlockRenderType.getEntityblockAnimatedMapped();
+    }
+
+    @Override
+    public void onStateReplaced2(BlockState state, World world, BlockPos pos, BlockState newState, boolean moved) {
+        // ブロックが別のブロックに置き換わる（＝破壊される）場合のみ処理を実行
+        if (!state.isOf(newState.getBlock())) {
+            removeConnectedRails(world, pos);
+        }
+        super.onStateReplaced2(state, world, pos, newState, moved);
+    }
+
+    /**
+     * 【修正版】指定された座標のノードに接続されているすべてのレールを削除する
+     * クライアント側での即時削除により、チラつきを防止する
+     */
+    private void removeConnectedRails(World world, BlockPos pos) {
+        Position nodePos = Init.blockPosToPosition(pos);
+
+        if (world.isClient()) {
+            // クライアント側: 即座にローカルデータから削除し、描画を更新する
+            MinecraftClientData clientData = MinecraftClientData.getInstance();
+            Map<Position, Rail> railsAtPos = clientData.positionsToRail.get(nodePos);
+
+            if (railsAtPos != null && !railsAtPos.isEmpty()) {
+                // ConcurrentModificationException を防ぐため、キーをコピーしてループする
+                for (Position otherPos : new ArrayList<>(railsAtPos.keySet())) {
+                    Rail rail = railsAtPos.get(otherPos);
+                    if (rail != null) {
+                        clientData.railIdMap.remove(rail.getHexId());
+
+                        Map<Position, Rail> map1 = clientData.positionsToRail.get(nodePos);
+                        if (map1 != null) map1.remove(otherPos);
+
+                        Map<Position, Rail> map2 = clientData.positionsToRail.get(otherPos);
+                        if (map2 != null) map2.remove(nodePos);
+                    }
+                }
+                clientData.positionsToRail.remove(nodePos);
+
+                // 描画キャッシュをクリアし、再描画を促す
+                world.updateListeners(pos, world.getBlockState(pos), world.getBlockState(pos), 3);
+            }
+        } else {
+            // サーバー側: 削除パケットを送信して、他のプレイヤーや永続化データにも反映させる
+            Data data = LoaderImpl.getDataForWorld(world);
+            if (data == null) return;
+
+            Map<Position, Rail> railsAtPos = data.positionsToRail.get(nodePos);
+            if (railsAtPos != null && !railsAtPos.isEmpty()) {
+                ServerWorld serverWorld = LoaderImpl.toServerWorld(world);
+                if (serverWorld == null) return;
+
+                for (Position otherPos : new ArrayList<>(railsAtPos.keySet())) {
+                    String railId = TwoPositionsBase.getHexId(nodePos, otherPos);
+                    PacketDeleteData.sendDirectlyToServerRailId(serverWorld, railId);
+                }
+            }
+        }
     }
 }

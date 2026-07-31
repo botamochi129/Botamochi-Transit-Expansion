@@ -5,25 +5,27 @@ import org.mtr.core.tool.Vector;
 public class BezierCurve {
     private final Vector p0, p1, p2, p3;
     private final double length;
+    private final double startY, endY;
+    private final double verticalRadius; // 【追加】垂直半径
     private static final int LENGTH_STEPS = 100;
 
-    public BezierCurve(Vector posStart, double startAngleRad, Vector posEnd, double endAngleRad) {
+    // 【修正】コンストラクタに verticalRadius を追加
+    public BezierCurve(Vector posStart, double startAngleRad, Vector posEnd, double endAngleRad, double verticalRadius) {
         this.p0 = posStart;
         this.p3 = posEnd;
+        this.startY = posStart.y();
+        this.endY = posEnd.y();
+        this.verticalRadius = verticalRadius;
 
-        // 始点と終点の 2D 平面距離
         double dist = Math.hypot(posEnd.x() - posStart.x(), posEnd.z() - posStart.z());
-        // 制御点の引き出し長さ（距離の半分）
         double handleLength = dist / 2.0;
 
-        // 始点制御点 P1
         this.p1 = new Vector(
                 posStart.x() + Math.cos(startAngleRad) * handleLength,
                 posStart.y(),
                 posStart.z() + Math.sin(startAngleRad) * handleLength
         );
 
-        // 終点制御点 P2 (向きを正しく合わせる)
         this.p2 = new Vector(
                 posEnd.x() + Math.cos(endAngleRad) * handleLength,
                 posEnd.y(),
@@ -44,11 +46,36 @@ public class BezierCurve {
         double uuu = uu * u;
         double ttt = tt * t;
 
+        // X-Z はベジェ曲線の計算
         double x = uuu * p0.x() + 3 * uu * t * p1.x() + 3 * u * tt * p2.x() + ttt * p3.x();
-        double y = uuu * p0.y() + 3 * uu * t * p1.y() + 3 * u * tt * p2.y() + ttt * p3.y();
         double z = uuu * p0.z() + 3 * uu * t * p1.z() + 3 * u * tt * p2.z() + ttt * p3.z();
 
+        // 【追加】Y座標は MTR の垂直半径計算（放物線補間）を模倣
+        double y = calculateY(t);
+
         return new Vector(x, y, z);
+    }
+
+    /**
+     * 【追加】MTR の垂直半径計算に基づいた Y座標の計算
+     * 垂直半径が 0 の場合は線形補間、それ以外の場合は放物線補間を行う
+     */
+    private double calculateY(double t) {
+        double dy = endY - startY;
+        if (verticalRadius <= 0 || Math.abs(dy) < 1e-5) {
+            // 垂直半径が 0、または高低差がほぼない場合は線形補間
+            return startY + dy * t;
+        }
+
+        // MTR の放物線補間ロジック（簡易版）
+        // 始点と終点の傾きを垂直半径に基づいて計算し、3次関数的に補間する
+        double maxSlope = dy / verticalRadius;
+        // 簡易的な放物線補間: y = start + dy * (3t^2 - 2t^3) (Hermite補間の応用)
+        double t2 = t * t;
+        double t3 = t2 * t;
+        double smoothT = 3 * t2 - 2 * t3;
+
+        return startY + dy * smoothT;
     }
 
     /**

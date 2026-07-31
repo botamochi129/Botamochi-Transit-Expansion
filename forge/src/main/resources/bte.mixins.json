@@ -7,8 +7,8 @@
     "mtr.ItemNodeModifierBaseMixin",
     "mtr.ItemRailModifierMixin",
     "mtr.RailMathMixin",
-    "mtr.RailMixin",
-    "mtr.RenderRailsPreviewMixin"
+    "mtr.RenderRailsMixin",
+    "mtr.RenderRailsNodeRotationMixin"
   ],
   "client": [
     "minecraft.NativeImageAccessor"
