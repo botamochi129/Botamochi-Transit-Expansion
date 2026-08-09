@@ -5,7 +5,9 @@
   "mixins": [
     "mtr.ItemNodeModifierBaseMixin",
     "mtr.ItemRailModifierMixin",
+    "mtr.PathDataMixin",
     "mtr.RailMathMixin",
+    "mtr.RailMixin",
     "mtr.RenderRailsNodeRotationMixin",
     "mtr.RenderRailsMixin"
   ],

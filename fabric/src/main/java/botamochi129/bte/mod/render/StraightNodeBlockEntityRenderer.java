@@ -29,9 +29,13 @@ public class StraightNodeBlockEntityRenderer extends BlockEntityRenderer<Straigh
 
         float yawDegrees;
         if (bound) {
-            yawDegrees = (float) ((angleDeg - 90 + 360) % 360);
+            // 【修正】内部角度(右回り)をMinecraftの回転(左回りが正)に変換し、モデルのデフォルト向きからのオフセット(-90)を適用
+            yawDegrees = (float) (-angleDeg - 90.0);
         } else {
-            yawDegrees = (float) ((System.currentTimeMillis() % 36000L) / 10.0D);
+            // 【修正】未接続時のアニメーションも右回りに回転させるため、符号を反転させる
+            long time = System.currentTimeMillis();
+            float animAngle = (float) ((time % 36000L) / 10.0D);
+            yawDegrees = -animAngle;
         }
 
         if (!connected) {

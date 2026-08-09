@@ -65,33 +65,26 @@ public abstract class ItemNodeModifierBaseMixin {
                 return;
             }
 
-            // 【重要修正】1. 基準角度の取得
+            // 1. 基準角度の取得
             double startDeg;
             if (beStart == null) {
-                // MTR標準ノード: 角度は絶対に変更しない (22.5°刻みを維持)
                 startDeg = BlockNode.getAngle(startState);
             } else if (beStart.isBound()) {
-                // StraightNode (バインド済み): 設定された角度を使用
                 startDeg = beStart.getAngleDegrees();
             } else {
-                // StraightNode (未バインド): 幾何学的な直線角度を基準にする
                 startDeg = calculateStraightAngle(startBlockPos, endBlockPos);
             }
 
             double endDeg;
             if (beEnd == null) {
-                // MTR標準ノード: 角度は絶対に変更しない (22.5°刻みを維持)
                 endDeg = BlockNode.getAngle(endState);
             } else if (beEnd.isBound()) {
-                // StraightNode (バインド済み): 設定された角度を使用
                 endDeg = beEnd.getAngleDegrees();
             } else {
-                // StraightNode (未バインド): 幾何学的な直線角度を基準にする
                 endDeg = calculateStraightAngle(endBlockPos, startBlockPos);
             }
 
-            // 【重要修正】2. MTR標準の similarFacing 補正を適用
-            // バインド済みであっても、接続方向に対して逆向きなら補正し、内部データもそれに合わせる
+            // 2. MTR標準の similarFacing 補正を適用
             float geoAngleDeg = (float) normalize360(Math.toDegrees(Math.atan2(
                     endBlockPos.getZ() - startBlockPos.getZ(),
                     endBlockPos.getX() - startBlockPos.getX()
@@ -105,7 +98,7 @@ public abstract class ItemNodeModifierBaseMixin {
                 endDeg = normalize360(endDeg + 180);
             }
 
-            // 3. 角度を更新 (補正後の角度でバインドし、内部データと描画を完全に同期させる)
+            // 3. 角度を更新
             if (beStart != null) {
                 beStart.bind(startDeg);
             }
@@ -124,8 +117,24 @@ public abstract class ItemNodeModifierBaseMixin {
             );
 
             // 5. バインド済みノードのベジェ曲線を更新
-            if (beStart != null && beStart.isBound()) beStart.updateConnectedRails();
-            if (beEnd != null && beEnd.isBound()) beEnd.updateConnectedRails();
+            if (beStart != null && beStart.isBound()) beStart.updateConnectedRails(true);
+            if (beEnd != null && beEnd.isBound()) beEnd.updateConnectedRails(true);
+
+            // 【追加】RAIL_MATH_DATA_MAP にも登録する（勾配の更新漏れを防ぐため）
+            long x1 = Math.min(startBlockPos.getX(), endBlockPos.getX());
+            long y1 = Math.min(startBlockPos.getY(), endBlockPos.getY());
+            long z1 = Math.min(startBlockPos.getZ(), endBlockPos.getZ());
+            long x2 = Math.max(startBlockPos.getX(), endBlockPos.getX());
+            long y2 = Math.max(startBlockPos.getY(), endBlockPos.getY());
+            long z2 = Math.max(startBlockPos.getZ(), endBlockPos.getZ());
+            String key = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
+
+            double[] dataToSave = new double[]{
+                    startBlockPos.getX() + 0.5, startBlockPos.getY(), startBlockPos.getZ() + 0.5,
+                    endBlockPos.getX() + 0.5, endBlockPos.getY(), endBlockPos.getZ() + 0.5,
+                    Math.toRadians(startDeg), Math.toRadians(endDeg), 0.0 // 垂直半径はここでは取得できないため0
+            };
+            StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.put(key, dataToSave);
 
             tag.remove(TAG_TRANSPORT_MODE);
             ci.cancel();

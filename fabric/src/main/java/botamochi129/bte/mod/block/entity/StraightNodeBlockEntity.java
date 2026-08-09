@@ -23,13 +23,18 @@ import org.mtr.mod.block.IBlock;
 import org.mtr.mod.packet.PacketUpdateData;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class StraightNodeBlockEntity extends BlockEntityExtension {
 
     private static final String KEY_ANGLE = "angle_degrees";
     public static final double UNBOUND_SENTINEL = -129129.0;
 
+    // RailMath のバウンディングボックスをキーにして、自由角度データを保存するマップ
+    public static final Map<String, double[]> RAIL_MATH_DATA_MAP = new ConcurrentHashMap<>();
+
     private double angleDegrees = UNBOUND_SENTINEL;
+    private boolean needsInitialUpdate = true;
 
     public StraightNodeBlockEntity(BlockPos pos, BlockState state) {
         super(Blocks.STRAIGHT_NODE_BE.get(), pos, state);
@@ -40,18 +45,17 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         this.angleDegrees = angle;
     }
 
-    public double getAngleDegrees() {
-        return angleDegrees;
+    // 【修正】初回のみシミュレーション側を更新する
+    public void tick() {
+        if (needsInitialUpdate && isBound()) {
+            updateConnectedRails(true); // 初回（ワールド再読み込み時など）はシミュレーション側も更新
+            needsInitialUpdate = false;
+        }
     }
 
-    public Angle getAngle() {
-        if (!isBound()) return null;
-        return AngleExtra.fromDegrees(angleDegrees);
-    }
-
-    public boolean isBound() {
-        return angleDegrees != UNBOUND_SENTINEL;
-    }
+    public double getAngleDegrees() { return angleDegrees; }
+    public Angle getAngle() { return isBound() ? AngleExtra.fromDegrees(angleDegrees) : null; }
+    public boolean isBound() { return angleDegrees != UNBOUND_SENTINEL; }
 
     public void bind(StraightNodeBlockEntity other) {
         if (isBound()) return;
@@ -65,7 +69,68 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         this.angleDegrees = normalize(angle);
         markDirty2();
         syncBlockEntity();
-        updateConnectedRails();
+        // 【修正】MTRのデータには触れず、ベジェ曲線のデータマップだけを更新する
+        updateBezierDataOnly();
+    }
+
+    // 【新規追加】RAIL_MATH_DATA_MAP だけを更新するメソッド
+    private void updateBezierDataOnly() {
+        if (!isBound()) return;
+        World world = getWorld2();
+        if (world == null || world.isClient()) return;
+
+        Data data = LoaderImpl.getDataForWorld(world);
+        if (data == null) return;
+
+        Position nodePos = Init.blockPosToPosition(getPos2());
+        double selfDeg = this.angleDegrees;
+
+        Map<Position, Rail> railsAtPos = data.positionsToRail.get(nodePos);
+        if (railsAtPos == null) return;
+
+        for (Map.Entry<Position, Rail> entry : railsAtPos.entrySet()) {
+            Position otherPos = entry.getKey();
+            Rail rail = entry.getValue();
+            if (rail == null || rail.railMath == null) continue;
+
+            // 端点座標からキーを生成
+            long x1 = Math.min(nodePos.getX(), otherPos.getX());
+            long y1 = Math.min(nodePos.getY(), otherPos.getY());
+            long z1 = Math.min(nodePos.getZ(), otherPos.getZ());
+            long x2 = Math.max(nodePos.getX(), otherPos.getX());
+            long y2 = Math.max(nodePos.getY(), otherPos.getY());
+            long z2 = Math.max(nodePos.getZ(), otherPos.getZ());
+            String railMathKey = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
+
+            // 角度を計算
+            float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
+                    otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX()));
+            float reverseGeoAngleDeg = (float) Math.toDegrees(Math.atan2(
+                    nodePos.getZ() - otherPos.getZ(), nodePos.getX() - otherPos.getX()));
+
+            BlockPos otherBlockPos = Init.positionToBlockPos(otherPos);
+            double otherDeg = BlockNode.getAngle(world.getBlockState(otherBlockPos));
+            BlockEntity rawBe = world.getBlockEntity(otherBlockPos);
+            if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity snbe && snbe.isBound()) {
+                otherDeg = snbe.getAngleDegrees();
+            }
+
+            double correctedSelfDeg = Angle.similarFacing((float) selfDeg, geoAngleDeg) ? selfDeg : selfDeg + 180;
+            double correctedOtherDeg = Angle.similarFacing((float) otherDeg, reverseGeoAngleDeg) ? otherDeg : otherDeg + 180;
+
+            double startRad = Math.toRadians(correctedSelfDeg);
+            double endRad = Math.toRadians(correctedOtherDeg);
+            double verticalRadius = rail.railMath.getVerticalRadius();
+
+            // データを保存
+            double[] dataToSave = new double[]{
+                    nodePos.getX() + 0.5, nodePos.getY(), nodePos.getZ() + 0.5,
+                    otherPos.getX() + 0.5, otherPos.getY(), otherPos.getZ() + 0.5,
+                    startRad, endRad, verticalRadius
+            };
+
+            RAIL_MATH_DATA_MAP.put(railMathKey, dataToSave);
+        }
     }
 
     public void unbind() {
@@ -86,13 +151,11 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         World world = getWorld2();
         if (world != null && !world.isClient()) {
             ServerWorld sw = LoaderImpl.toServerWorld(world);
-            if (sw != null) {
-                sw.getChunkManager().markForUpdate(getPos2());
-            }
+            if (sw != null) sw.getChunkManager().markForUpdate(getPos2());
         }
     }
 
-    public void updateConnectedRails() {
+    public void updateConnectedRails(boolean updateSimulation) {
         if (!isBound()) return;
         World world = getWorld2();
         if (world == null || world.isClient()) return;
@@ -112,50 +175,58 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             Position otherPos = entry.getKey();
             Rail oldRail = entry.getValue();
 
-            Rail newRail = createUpdatedRail(oldRail, nodePos, otherPos, selfDeg);
-
-            if (newRail != null && newRail.railMath != null && newRail.railMath instanceof IRailMathExtra mathExtra) {
-
-                // 【重要修正】幾何学的な方向を計算
-                float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
-                        otherPos.getZ() - nodePos.getZ(),
-                        otherPos.getX() - nodePos.getX()
-                ));
-                float reverseGeoAngleDeg = (float) Math.toDegrees(Math.atan2(
-                        nodePos.getZ() - otherPos.getZ(),
-                        nodePos.getX() - otherPos.getX()
-                ));
-
-                // 相手の角度を取得
-                BlockPos otherBlockPos = Init.positionToBlockPos(otherPos);
-                double otherDeg = BlockNode.getAngle(world.getBlockState(otherBlockPos));
-                BlockEntity rawBe = world.getBlockEntity(otherBlockPos);
-                if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity snbe && snbe.isBound()) {
-                    otherDeg = snbe.getAngleDegrees();
-                }
-
-                // 【核心修正】similarFacing で補正した角度をベジェ曲線に渡す
-                // これにより、MTR標準ノードが逆向きでも、描画の接線が正しく揃う
-                double correctedSelfDeg = Angle.similarFacing((float) selfDeg, geoAngleDeg) ? selfDeg : selfDeg + 180;
-                double correctedOtherDeg = Angle.similarFacing((float) otherDeg, reverseGeoAngleDeg) ? otherDeg : otherDeg + 180;
-
-                double startRad = Math.toRadians(correctedSelfDeg);
-                double endRad = Math.toRadians(correctedOtherDeg);
-
-                Vector startVec = new Vector(nodePos.getX() + 0.5, nodePos.getY(), nodePos.getZ() + 0.5);
-                Vector endVec = new Vector(otherPos.getX() + 0.5, otherPos.getY(), otherPos.getZ() + 0.5);
-
-                double verticalRadius = oldRail.railMath.getVerticalRadius();
-                mathExtra.bte$enableBezier(startVec, startRad, endVec, endRad, verticalRadius);
+            if (updateSimulation) {
+                Rail newRail = createUpdatedRail(oldRail, nodePos, otherPos, selfDeg);
+                if (newRail == null) continue;
 
                 data.rails.remove(oldRail);
                 data.rails.add(newRail);
                 data.positionsToRail.get(nodePos).put(otherPos, newRail);
                 data.positionsToRail.get(otherPos).put(nodePos, newRail);
-            }
 
-            if (serverWorld != null && newRail != null) {
-                PacketUpdateData.sendDirectlyToServerRail(serverWorld, newRail);
+                if (serverWorld != null) {
+                    org.mtr.mod.packet.PacketUpdateData.sendDirectlyToServerRail(serverWorld, newRail);
+                }
+
+                if (newRail.railMath != null) {
+                    // 【超重要修正】キーを「両端の座標」に基づく不変の文字列にする
+                    long x1 = Math.min(nodePos.getX(), otherPos.getX());
+                    long y1 = Math.min(nodePos.getY(), otherPos.getY());
+                    long z1 = Math.min(nodePos.getZ(), otherPos.getZ());
+                    long x2 = Math.max(nodePos.getX(), otherPos.getX());
+                    long y2 = Math.max(nodePos.getY(), otherPos.getY());
+                    long z2 = Math.max(nodePos.getZ(), otherPos.getZ());
+
+                    String railMathKey = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
+                    System.out.println("[BTE SERVER] REGISTERING Key: " + railMathKey);
+
+                    float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
+                            otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX()));
+                    float reverseGeoAngleDeg = (float) Math.toDegrees(Math.atan2(
+                            nodePos.getZ() - otherPos.getZ(), nodePos.getX() - otherPos.getX()));
+
+                    BlockPos otherBlockPos = Init.positionToBlockPos(otherPos);
+                    double otherDeg = BlockNode.getAngle(world.getBlockState(otherBlockPos));
+                    BlockEntity rawBe = world.getBlockEntity(otherBlockPos);
+                    if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity snbe && snbe.isBound()) {
+                        otherDeg = snbe.getAngleDegrees();
+                    }
+
+                    double correctedSelfDeg = Angle.similarFacing((float) selfDeg, geoAngleDeg) ? selfDeg : selfDeg + 180;
+                    double correctedOtherDeg = Angle.similarFacing((float) otherDeg, reverseGeoAngleDeg) ? otherDeg : otherDeg + 180;
+
+                    double startRad = Math.toRadians(correctedSelfDeg);
+                    double endRad = Math.toRadians(correctedOtherDeg);
+                    double verticalRadius = newRail.railMath.getVerticalRadius();
+
+                    double[] dataToSave = new double[]{
+                            nodePos.getX() + 0.5, nodePos.getY(), nodePos.getZ() + 0.5,
+                            otherPos.getX() + 0.5, otherPos.getY(), otherPos.getZ() + 0.5,
+                            startRad, endRad, verticalRadius
+                    };
+
+                    RAIL_MATH_DATA_MAP.put(railMathKey, dataToSave);
+                }
             }
         }
     }
@@ -174,19 +245,15 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         }
 
         float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
-                otherPos.getZ() - nodePos.getZ(),
-                otherPos.getX() - nodePos.getX()
-        ));
+                otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX()));
         float reverseGeoAngleDeg = (float) Math.toDegrees(Math.atan2(
-                nodePos.getZ() - otherPos.getZ(),
-                nodePos.getX() - otherPos.getX()
-        ));
+                nodePos.getZ() - otherPos.getZ(), nodePos.getX() - otherPos.getX()));
 
         float correctedNodeDeg = Angle.similarFacing((float) selfDeg, geoAngleDeg) ? (float) selfDeg : (float) selfDeg + 180;
-        Angle correctedNodeAngle = AngleExtra.fromDegrees(correctedNodeDeg);
+        Angle correctedNodeAngle = org.mtr.core.tool.Angle.fromAngle(correctedNodeDeg);
 
         float correctedOtherDeg = Angle.similarFacing((float) otherDeg, reverseGeoAngleDeg) ? (float) otherDeg : (float) otherDeg + 180;
-        Angle correctedOtherAngle = AngleExtra.fromDegrees(correctedOtherDeg);
+        Angle correctedOtherAngle = org.mtr.core.tool.Angle.fromAngle(correctedOtherDeg);
 
         double nodeSpeedMs = oldRail.getSpeedLimitMetersPerMillisecond(nodePos);
         double otherSpeedMs = oldRail.getSpeedLimitMetersPerMillisecond(otherPos);
@@ -200,12 +267,8 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
                     oldRail.railMath.getVerticalRadius(),
                     new ObjectArrayList<>(oldRail.getStyles()),
                     nodeSpeedKmh, otherSpeedKmh,
-                    oldRail.isPlatform(),
-                    oldRail.isSiding(),
-                    oldRail.canAccelerate(),
-                    oldRail.canConnectRemotely(),
-                    true,
-                    oldRail.getTransportMode()
+                    oldRail.isPlatform(), oldRail.isSiding(), oldRail.canAccelerate(),
+                    oldRail.canConnectRemotely(), true, oldRail.getTransportMode()
             );
         } catch (Exception e) {
             return null;
@@ -225,18 +288,15 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         } else {
             angleDegrees = UNBOUND_SENTINEL;
         }
+        this.needsInitialUpdate = true;
     }
 
     @Override
     public void writeCompoundTag(CompoundTag tag) {
         super.writeCompoundTag(tag);
         if (isBound()) {
-            // 【重要修正】保存時に角度を 0〜180° の範囲に正規化する
-            // これにより、コピーして設置した際も、意図した傾き（例: 30°）が正しく復元される
             double normalizedAngle = angleDegrees % 180.0;
-            if (normalizedAngle < 0.0) {
-                normalizedAngle += 180.0;
-            }
+            if (normalizedAngle < 0.0) normalizedAngle += 180.0;
             tag.putDouble(KEY_ANGLE, normalizedAngle);
         }
     }

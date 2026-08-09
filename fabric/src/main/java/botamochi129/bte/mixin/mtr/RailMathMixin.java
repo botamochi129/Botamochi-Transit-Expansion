@@ -1,18 +1,30 @@
 package botamochi129.bte.mixin.mtr;
 
+import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
 import botamochi129.bte.mod.data.BezierCurve;
 import botamochi129.bte.mod.data.IRailMathExtra;
+import org.mtr.core.data.Position;
+import org.mtr.core.data.Rail;
 import org.mtr.core.data.RailMath;
+import org.mtr.core.tool.Angle;
 import org.mtr.core.tool.Vector;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(value = RailMath.class, remap = false)
 public abstract class RailMathMixin implements IRailMathExtra {
+
+    // 【追加】RailMath のバウンディングボックスフィールドを Shadow で取得
+    @Shadow public long minX;
+    @Shadow public long maxX;
+    @Shadow public long minZ;
+    @Shadow public long maxZ;
 
     @Unique private BezierCurve bte$bezierCurve = null;
     @Unique private boolean bte$isBezierEnabled = false;
@@ -21,7 +33,6 @@ public abstract class RailMathMixin implements IRailMathExtra {
     @Unique private Vector bte$startPos = null;
     @Unique private Vector bte$endPos = null;
 
-    // 【修正】verticalRadius を受け取るように変更
     @Override
     public void bte$enableBezier(Vector startPos, double startRad, Vector endPos, double endRad, double verticalRadius) {
         if (this.bte$isBezierEnabled && this.bte$bezierCurve != null
@@ -30,41 +41,119 @@ public abstract class RailMathMixin implements IRailMathExtra {
                 && this.bte$endPos != null && this.bte$endPos.equals(endPos)) {
             return;
         }
-
         this.bte$startPos = startPos;
         this.bte$endPos = endPos;
         this.bte$startRad = startRad;
         this.bte$endRad = endRad;
-        // 【修正】BezierCurve のコンストラクタに verticalRadius を渡す
         this.bte$bezierCurve = new BezierCurve(startPos, startRad, endPos, endRad, verticalRadius);
         this.bte$isBezierEnabled = true;
+
+        // 【超重要追加】クライアント側でも PathDataMixin がデータを見つけられるようにマップに登録する
+        long x1 = Math.min((long) startPos.x(), (long) endPos.x());
+        long y1 = Math.min((long) startPos.y(), (long) endPos.y());
+        long z1 = Math.min((long) startPos.z(), (long) endPos.z());
+        long x2 = Math.max((long) startPos.x(), (long) endPos.x());
+        long y2 = Math.max((long) startPos.y(), (long) endPos.y());
+        long z2 = Math.max((long) startPos.z(), (long) endPos.z());
+        String key = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
+
+        double[] dataToSave = new double[]{
+                startPos.x(), startPos.y(), startPos.z(),
+                endPos.x(), endPos.y(), endPos.z(),
+                startRad, endRad, verticalRadius
+        };
+        botamochi129.bte.mod.block.entity.StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.put(key, dataToSave);
     }
 
     @Override
     public boolean bte$isBezierEnabled() { return bte$isBezierEnabled; }
-
     @Override
     public double bte$getStartRad() { return bte$startRad; }
-
     @Override
     public double bte$getEndRad() { return bte$endRad; }
 
-    // 【重要】CancellationException を回避するため、getPosition のフックは削除（または無効化）
-    // 列車の移動計算などは、MTR標準の getPosition をそのまま使う（X-Zがベジェ曲線にならない可能性があるが、クラッシュは回避できる）
-    // もし列車の移動もベジェ曲線に合わせたい場合は、@ModifyVariable を正しく使う必要があるが、まずは描画を優先する
-
-    @Inject(method = "getLength()D", at = @At("HEAD"), cancellable = true)
-    private void bte$getLength(CallbackInfoReturnable<Double> cir) {
+    // 【核心】ベジェ曲線を取得する統合メソッド
+    @Unique
+    private BezierCurve bte$getActiveCurve() {
+        // 1. @Unique フィールドが有効な場合（クライアント側の描画用）
         if (bte$isBezierEnabled && bte$bezierCurve != null) {
-            cir.setReturnValue(bte$bezierCurve.getLength());
+            return bte$bezierCurve;
+        }
+
+        // 2. 静的マップにデータがある場合（サーバー側のシミュレーション用）
+        String railMathKey = this.minX + "," + this.maxX + "," + this.minZ + "," + this.maxZ;
+        //System.out.println("[BTE MIXIN] LOOKING UP RailMath Key: " + railMathKey + " on thread: " + Thread.currentThread().getName());
+
+        double[] data = StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.get(railMathKey);
+        if (data != null) {
+            //System.out.println("[BTE MIXIN] SUCCESS: Found data! Applying Bezier curve.");
+            Vector startPos = new Vector(data[0], data[1], data[2]);
+            Vector endPos = new Vector(data[3], data[4], data[5]);
+            return new BezierCurve(startPos, data[6], endPos, data[7], data[8]);
+        } else {
+            //System.out.println("[BTE MIXIN] FAILED: Data NOT found. Using default MTR math.");
+        }
+
+        return null;
+    }
+
+    @ModifyArg(method = "<init>(Lorg/mtr/core/data/Position;Lorg/mtr/core/tool/Angle;Lorg/mtr/core/data/Position;Lorg/mtr/core/tool/Angle;Lorg/mtr/core/data/Rail$Shape;D)V", at = @At("HEAD"), index = 1)
+    private static Angle bte$modifyAngle1(Position position1, Angle angle1, Position position2, Angle angle2, Rail.Shape shape, double verticalRadius) {
+        long x1 = Math.min(position1.getX(), position2.getX());
+        long y1 = Math.min(position1.getY(), position2.getY());
+        long z1 = Math.min(position1.getZ(), position2.getZ());
+        long x2 = Math.max(position1.getX(), position2.getX());
+        long y2 = Math.max(position1.getY(), position2.getY());
+        long z2 = Math.max(position1.getZ(), position2.getZ());
+        String key = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
+        double[] data = StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.get(key);
+        if (data != null) {
+            return Angle.fromAngle((float) Math.toDegrees(data[6]));
+        }
+        return angle1;
+    }
+
+    // 【超重要追加】RailMath のコンストラクタをフックし、angle2 を自由角度に書き換える
+    @ModifyArg(method = "<init>(Lorg/mtr/core/data/Position;Lorg/mtr/core/tool/Angle;Lorg/mtr/core/data/Position;Lorg/mtr/core/tool/Angle;Lorg/mtr/core/data/Rail$Shape;D)V", at = @At("HEAD"), index = 3)
+    private static Angle bte$modifyAngle2(Position position1, Angle angle1, Position position2, Angle angle2, Rail.Shape shape, double verticalRadius) {
+        long x1 = Math.min(position1.getX(), position2.getX());
+        long y1 = Math.min(position1.getY(), position2.getY());
+        long z1 = Math.min(position1.getZ(), position2.getZ());
+        long x2 = Math.max(position1.getX(), position2.getX());
+        long y2 = Math.max(position1.getY(), position2.getY());
+        long z2 = Math.max(position1.getZ(), position2.getZ());
+        String key = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
+        double[] data = StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.get(key);
+        if (data != null) {
+            return Angle.fromAngle((float) Math.toDegrees(data[7]));
+        }
+        return angle2;
+    }
+
+    @Inject(method = "getPosition(DZ)Lorg/mtr/core/tool/Vector;", at = @At("HEAD"), cancellable = true)
+    private void bte$modifyPosition(double rawValue, boolean reverse, CallbackInfoReturnable<Vector> cir) {
+        BezierCurve curve = bte$getActiveCurve();
+        if (curve != null) {
+            double totalLength = curve.getLength();
+            double clampedValue = Math.max(0, Math.min(rawValue, totalLength));
+            double targetValue = reverse ? totalLength - clampedValue : clampedValue;
+            cir.setReturnValue(curve.getPosition(targetValue));
         }
     }
 
-    // 描画処理の完全な乗っ取り
+    @Inject(method = "getLength()D", at = @At("HEAD"), cancellable = true)
+    private void bte$getLength(CallbackInfoReturnable<Double> cir) {
+        BezierCurve curve = bte$getActiveCurve();
+        if (curve != null) {
+            cir.setReturnValue(curve.getLength());
+        }
+    }
+
     @Inject(method = "render", at = @At("HEAD"), cancellable = true)
     private void bte$render(RailMath.RenderRail callback, double interval, float offsetRadius1, float offsetRadius2, CallbackInfo ci) {
-        if (bte$isBezierEnabled && bte$bezierCurve != null) {
-            double totalLength = bte$bezierCurve.getLength();
+        BezierCurve curve = bte$getActiveCurve();
+        if (curve != null) {
+            double totalLength = curve.getLength();
             if (totalLength <= 0) return;
 
             double count = totalLength;
@@ -75,41 +164,31 @@ public abstract class RailMathMixin implements IRailMathExtra {
             double previousY = 0.0;
 
             for (double i = 0.0; i < count + increment - 0.1; i += increment) {
-                // 【修正】self.getPosition を呼ばず、BezierCurve から直接座標を取得
-                double t = bte$bezierCurve.getTForDistance(i);
-                Vector center = bte$bezierCurve.getPoint(t); // ここで Y座標も計算される
-                double y = center.y();
+                double t = curve.getTForDistance(i);
+                Vector bezierPos = curve.getPoint(t);
+                double y = bezierPos.y();
 
-                Vector tangent = bte$bezierCurve.getTangent(t);
+                Vector tangent = curve.getTangent(t);
                 Vector dir = new Vector(tangent.x(), 0, tangent.z()).normalize();
                 Vector normal = new Vector(-dir.z(), 0, dir.x());
 
                 Vector corner1 = new Vector(
-                        center.x() + normal.x() * offsetRadius2,
-                        y,
-                        center.z() + normal.z() * offsetRadius2
+                        bezierPos.x() + normal.x() * offsetRadius2, y, bezierPos.z() + normal.z() * offsetRadius2
                 );
                 Vector corner2 = offsetRadius2 == offsetRadius1 ? corner1 : new Vector(
-                        center.x() + normal.x() * offsetRadius1,
-                        y,
-                        center.z() + normal.z() * offsetRadius1
+                        bezierPos.x() + normal.x() * offsetRadius1, y, bezierPos.z() + normal.z() * offsetRadius1
                 );
 
                 if (previousCorner1 != null) {
                     callback.renderRail(
-                            previousCorner1.x(), previousCorner1.z(),
-                            previousCorner2.x(), previousCorner2.z(),
-                            corner1.x(), corner1.z(),
-                            corner2.x(), corner2.z(),
-                            previousY, y
+                            previousCorner1.x(), previousCorner1.z(), previousCorner2.x(), previousCorner2.z(),
+                            corner1.x(), corner1.z(), corner2.x(), corner2.z(), previousY, y
                     );
                 }
-
                 previousCorner1 = corner2;
                 previousCorner2 = corner1;
                 previousY = y;
             }
-
             ci.cancel();
         }
     }

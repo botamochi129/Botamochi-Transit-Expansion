@@ -6,10 +6,9 @@ public class BezierCurve {
     private final Vector p0, p1, p2, p3;
     private final double length;
     private final double startY, endY;
-    private final double verticalRadius; // 【追加】垂直半径
+    private final double verticalRadius;
     private static final int LENGTH_STEPS = 100;
 
-    // 【修正】コンストラクタに verticalRadius を追加
     public BezierCurve(Vector posStart, double startAngleRad, Vector posEnd, double endAngleRad, double verticalRadius) {
         this.p0 = posStart;
         this.p3 = posEnd;
@@ -35,9 +34,6 @@ public class BezierCurve {
         this.length = calculateLength(LENGTH_STEPS);
     }
 
-    /**
-     * パラメータ t (0.0 〜 1.0) における 3D 座標を取得
-     */
     public Vector getPoint(double t) {
         t = Math.max(0, Math.min(1, t));
         double u = 1 - t;
@@ -46,12 +42,11 @@ public class BezierCurve {
         double uuu = uu * u;
         double ttt = tt * t;
 
-        // X-Z はベジェ曲線の計算
         double x = uuu * p0.x() + 3 * uu * t * p1.x() + 3 * u * tt * p2.x() + ttt * p3.x();
         double z = uuu * p0.z() + 3 * uu * t * p1.z() + 3 * u * tt * p2.z() + ttt * p3.z();
 
-        // 【追加】Y座標は MTR の垂直半径計算（放物線補間）を模倣
-        double y = calculateY(t);
+        // Y座標は簡易的な線形補間（実際には RailMathMixin 側で MTRの計算結果で上書きされる）
+        double y = startY + (endY - startY) * t;
 
         return new Vector(x, y, z);
     }
