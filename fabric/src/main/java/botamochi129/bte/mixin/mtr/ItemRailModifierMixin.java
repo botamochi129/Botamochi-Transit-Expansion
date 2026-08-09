@@ -89,7 +89,8 @@ public abstract class ItemRailModifierMixin {
                     Math.toRadians(startDeg),
                     endVec,
                     Math.toRadians(endDeg),
-                    verticalRadius
+                    verticalRadius,
+                    rail.railMath.getShape()
             );
         }
     }

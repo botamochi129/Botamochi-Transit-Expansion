@@ -20,7 +20,6 @@ import org.mtr.mapping.mapper.BlockEntityExtension;
 import org.mtr.mod.Init;
 import org.mtr.mod.block.BlockNode;
 import org.mtr.mod.block.IBlock;
-import org.mtr.mod.packet.PacketUpdateData;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,6 +27,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class StraightNodeBlockEntity extends BlockEntityExtension {
 
     private static final String KEY_ANGLE = "angle_degrees";
+    private static final String KEY_OFFSET_X = "offset_x";
+    private static final String KEY_OFFSET_Y = "offset_y";
+    private static final String KEY_OFFSET_Z = "offset_z";
+
     public static final double UNBOUND_SENTINEL = -129129.0;
 
     // RailMath のバウンディングボックスをキーにして、自由角度データを保存するマップ
@@ -35,6 +38,11 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
 
     private double angleDegrees = UNBOUND_SENTINEL;
     private boolean needsInitialUpdate = true;
+
+    // ★ 追加: オフセット値
+    private double offsetX = 0.0;
+    private double offsetY = 0.0;
+    private double offsetZ = 0.0;
 
     public StraightNodeBlockEntity(BlockPos pos, BlockState state) {
         super(Blocks.STRAIGHT_NODE_BE.get(), pos, state);
@@ -45,10 +53,9 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         this.angleDegrees = angle;
     }
 
-    // 【修正】初回のみシミュレーション側を更新する
     public void tick() {
         if (needsInitialUpdate && isBound()) {
-            updateConnectedRails(true); // 初回（ワールド再読み込み時など）はシミュレーション側も更新
+            updateConnectedRails(true);
             needsInitialUpdate = false;
         }
     }
@@ -56,6 +63,21 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
     public double getAngleDegrees() { return angleDegrees; }
     public Angle getAngle() { return isBound() ? AngleExtra.fromDegrees(angleDegrees) : null; }
     public boolean isBound() { return angleDegrees != UNBOUND_SENTINEL; }
+
+    // ★ 追加: オフセット関連のGetter
+    public double getOffsetX() { return offsetX; }
+    public double getOffsetY() { return offsetY; }
+    public double getOffsetZ() { return offsetZ; }
+
+    // ★ 追加: オフセット設定用Setter
+    public void setOffset(double x, double y, double z) {
+        this.offsetX = Math.max(-1.0, Math.min(1.0, x));
+        this.offsetY = Math.max(-1.0, Math.min(1.0, y));
+        this.offsetZ = Math.max(-1.0, Math.min(1.0, z));
+        markDirty2();
+        syncBlockEntity();
+        updateBezierDataOnly(); // オフセットが変わったらベジェデータも即座に更新
+    }
 
     public void bind(StraightNodeBlockEntity other) {
         if (isBound()) return;
@@ -69,11 +91,10 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         this.angleDegrees = normalize(angle);
         markDirty2();
         syncBlockEntity();
-        // 【修正】MTRのデータには触れず、ベジェ曲線のデータマップだけを更新する
         updateBezierDataOnly();
     }
 
-    // 【新規追加】RAIL_MATH_DATA_MAP だけを更新するメソッド
+    // RAIL_MATH_DATA_MAP だけを更新するメソッド
     private void updateBezierDataOnly() {
         if (!isBound()) return;
         World world = getWorld2();
@@ -93,7 +114,7 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             Rail rail = entry.getValue();
             if (rail == null || rail.railMath == null) continue;
 
-            // 端点座標からキーを生成
+            // キー生成（整数座標）
             long x1 = Math.min(nodePos.getX(), otherPos.getX());
             long y1 = Math.min(nodePos.getY(), otherPos.getY());
             long z1 = Math.min(nodePos.getZ(), otherPos.getZ());
@@ -102,7 +123,7 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             long z2 = Math.max(nodePos.getZ(), otherPos.getZ());
             String railMathKey = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
 
-            // 角度を計算
+            // 角度計算
             float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
                     otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX()));
             float reverseGeoAngleDeg = (float) Math.toDegrees(Math.atan2(
@@ -110,9 +131,14 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
 
             BlockPos otherBlockPos = Init.positionToBlockPos(otherPos);
             double otherDeg = BlockNode.getAngle(world.getBlockState(otherBlockPos));
+            double otherOffX = 0, otherOffY = 0, otherOffZ = 0;
+
             BlockEntity rawBe = world.getBlockEntity(otherBlockPos);
             if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity snbe && snbe.isBound()) {
                 otherDeg = snbe.getAngleDegrees();
+                otherOffX = snbe.getOffsetX();
+                otherOffY = snbe.getOffsetY();
+                otherOffZ = snbe.getOffsetZ();
             }
 
             double correctedSelfDeg = Angle.similarFacing((float) selfDeg, geoAngleDeg) ? selfDeg : selfDeg + 180;
@@ -121,12 +147,13 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             double startRad = Math.toRadians(correctedSelfDeg);
             double endRad = Math.toRadians(correctedOtherDeg);
             double verticalRadius = rail.railMath.getVerticalRadius();
+            Rail.Shape shape = rail.railMath.getShape();
 
-            // データを保存
+            // ★ 修正: オフセットを適用した座標を保存 (配列サイズ10)
             double[] dataToSave = new double[]{
-                    nodePos.getX() + 0.5, nodePos.getY(), nodePos.getZ() + 0.5,
-                    otherPos.getX() + 0.5, otherPos.getY(), otherPos.getZ() + 0.5,
-                    startRad, endRad, verticalRadius
+                    nodePos.getX() + 0.5 + this.offsetX, nodePos.getY() + this.offsetY, nodePos.getZ() + 0.5 + this.offsetZ,
+                    otherPos.getX() + 0.5 + otherOffX, otherPos.getY() + otherOffY, otherPos.getZ() + 0.5 + otherOffZ,
+                    startRad, endRad, verticalRadius, shape.ordinal()
             };
 
             RAIL_MATH_DATA_MAP.put(railMathKey, dataToSave);
@@ -179,17 +206,16 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
                 Rail newRail = createUpdatedRail(oldRail, nodePos, otherPos, selfDeg);
                 if (newRail == null) continue;
 
-                data.rails.remove(oldRail);
-                data.rails.add(newRail);
-                data.positionsToRail.get(nodePos).put(otherPos, newRail);
-                data.positionsToRail.get(otherPos).put(nodePos, newRail);
+                //data.rails.remove(oldRail);
+                //data.rails.add(newRail);
+                //data.positionsToRail.get(nodePos).put(otherPos, newRail);
+                //data.positionsToRail.get(otherPos).put(nodePos, newRail);
 
                 if (serverWorld != null) {
                     org.mtr.mod.packet.PacketUpdateData.sendDirectlyToServerRail(serverWorld, newRail);
                 }
 
                 if (newRail.railMath != null) {
-                    // 【超重要修正】キーを「両端の座標」に基づく不変の文字列にする
                     long x1 = Math.min(nodePos.getX(), otherPos.getX());
                     long y1 = Math.min(nodePos.getY(), otherPos.getY());
                     long z1 = Math.min(nodePos.getZ(), otherPos.getZ());
@@ -198,7 +224,6 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
                     long z2 = Math.max(nodePos.getZ(), otherPos.getZ());
 
                     String railMathKey = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
-                    System.out.println("[BTE SERVER] REGISTERING Key: " + railMathKey);
 
                     float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
                             otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX()));
@@ -207,9 +232,14 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
 
                     BlockPos otherBlockPos = Init.positionToBlockPos(otherPos);
                     double otherDeg = BlockNode.getAngle(world.getBlockState(otherBlockPos));
+                    double otherOffX = 0, otherOffY = 0, otherOffZ = 0;
+
                     BlockEntity rawBe = world.getBlockEntity(otherBlockPos);
                     if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity snbe && snbe.isBound()) {
                         otherDeg = snbe.getAngleDegrees();
+                        otherOffX = snbe.getOffsetX();
+                        otherOffY = snbe.getOffsetY();
+                        otherOffZ = snbe.getOffsetZ();
                     }
 
                     double correctedSelfDeg = Angle.similarFacing((float) selfDeg, geoAngleDeg) ? selfDeg : selfDeg + 180;
@@ -218,11 +248,13 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
                     double startRad = Math.toRadians(correctedSelfDeg);
                     double endRad = Math.toRadians(correctedOtherDeg);
                     double verticalRadius = newRail.railMath.getVerticalRadius();
+                    Rail.Shape shape = newRail.railMath.getShape();
 
+                    // ★ 修正: オフセットを適用した座標を保存 (配列サイズ10)
                     double[] dataToSave = new double[]{
-                            nodePos.getX() + 0.5, nodePos.getY(), nodePos.getZ() + 0.5,
-                            otherPos.getX() + 0.5, otherPos.getY(), otherPos.getZ() + 0.5,
-                            startRad, endRad, verticalRadius
+                            nodePos.getX() + 0.5 + this.offsetX, nodePos.getY() + this.offsetY, nodePos.getZ() + 0.5 + this.offsetZ,
+                            otherPos.getX() + 0.5 + otherOffX, otherPos.getY() + otherOffY, otherPos.getZ() + 0.5 + otherOffZ,
+                            startRad, endRad, verticalRadius, shape.ordinal()
                     };
 
                     RAIL_MATH_DATA_MAP.put(railMathKey, dataToSave);
@@ -288,6 +320,16 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         } else {
             angleDegrees = UNBOUND_SENTINEL;
         }
+
+        // ★ 追加: オフセットの読み込み
+        if (tag.contains(KEY_OFFSET_X)) {
+            offsetX = tag.getDouble(KEY_OFFSET_X);
+            offsetY = tag.getDouble(KEY_OFFSET_Y);
+            offsetZ = tag.getDouble(KEY_OFFSET_Z);
+        } else {
+            offsetX = offsetY = offsetZ = 0.0;
+        }
+
         this.needsInitialUpdate = true;
     }
 
@@ -298,6 +340,13 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             double normalizedAngle = angleDegrees % 180.0;
             if (normalizedAngle < 0.0) normalizedAngle += 180.0;
             tag.putDouble(KEY_ANGLE, normalizedAngle);
+        }
+
+        // ★ 追加: オフセットの保存
+        if (offsetX != 0.0 || offsetY != 0.0 || offsetZ != 0.0) {
+            tag.putDouble(KEY_OFFSET_X, offsetX);
+            tag.putDouble(KEY_OFFSET_Y, offsetY);
+            tag.putDouble(KEY_OFFSET_Z, offsetZ);
         }
     }
 }

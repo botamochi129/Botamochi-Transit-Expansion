@@ -2,12 +2,13 @@ package botamochi129.bte.mod.block;
 
 import botamochi129.bte.mapping.LoaderImpl;
 import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
-import botamochi129.bte.mod.client.ClientHelper;
+import botamochi129.bte.mod.screen.StraightNodeAngleScreen;
 import org.mtr.core.data.Data;
 import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
 import org.mtr.core.data.TwoPositionsBase;
 import org.mtr.core.data.TransportMode;
+import org.mtr.libraries.it.unimi.dsi.fastutil.objects.ObjectObjectImmutablePair;
 import org.mtr.mapping.holder.*;
 import org.mtr.mapping.mapper.BlockEntityExtension;
 import org.mtr.mapping.mapper.BlockWithEntity;
@@ -27,18 +28,21 @@ public class StraightNodeBlock extends BlockNode implements BlockWithEntity {
     }
 
     @Override
-    public ActionResult onUse2(BlockState state, World world, BlockPos pos, PlayerEntity player, Hand hand, BlockHitResult hit) {
-        if (player != null && player.isHolding(Items.BRUSH.get())) {
-            if (world.isClient()) {
-                openAngleScreen(pos, world);
-            }
-            return ActionResult.SUCCESS;
-        }
-        return super.onUse2(state, world, pos, player, hand, hit);
-    }
+    public ActionResult onUse2(BlockState blockState, World world, BlockPos blockPos, PlayerEntity playerEntity, Hand hand, BlockHitResult hit) {
+        if (world.isClient()) {
+            BlockPos targetBlockPos = null;
 
-    private static void openAngleScreen(BlockPos pos, World world) {
-        ClientHelper.openAngleScreen(pos, world);
+            // ★ MTR標準と同じく、ブラシを持っている場合は厳密なRaycastでレールを特定
+            if (playerEntity.isHolding(Items.BRUSH.get())) {
+                final ObjectObjectImmutablePair<Rail, BlockPos> railAndBlockPos = MinecraftClientData.getInstance().getFacingRailAndBlockPos(false);
+                if (railAndBlockPos != null) {
+                    targetBlockPos = railAndBlockPos.right(); // 接続先のBlockPosを取得
+                    MinecraftClient.getInstance().openScreen(new Screen(new StraightNodeAngleScreen(blockPos, world, targetBlockPos)));
+                    return ActionResult.SUCCESS;
+                }
+            }
+        }
+        return super.onUse2(blockState, world, blockPos, playerEntity, hand, hit);
     }
 
     @Override

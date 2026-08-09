@@ -27,60 +27,55 @@ public class StraightNodeBlockEntityRenderer extends BlockEntityRenderer<Straigh
         final boolean bound = entity.isBound();
         final boolean connected = entity.isConnected();
 
+        // ★ 追加: オフセット値の取得
+        final double offX = entity.getOffsetX();
+        final double offY = entity.getOffsetY();
+        final double offZ = entity.getOffsetZ();
+
         float yawDegrees;
         if (bound) {
-            // 【修正】内部角度(右回り)をMinecraftの回転(左回りが正)に変換し、モデルのデフォルト向きからのオフセット(-90)を適用
             yawDegrees = (float) (-angleDeg - 90.0);
         } else {
-            // 【修正】未接続時のアニメーションも右回りに回転させるため、符号を反転させる
             long time = System.currentTimeMillis();
             float animAngle = (float) ((time % 36000L) / 10.0D);
             yawDegrees = -animAngle;
         }
 
         if (!connected) {
-            renderNode(pos, yawDegrees, light);
+            // ★ 修正: オフセット値を渡す
+            renderNode(pos, yawDegrees, light, offX, offY, offZ);
         }
     }
 
-    private void renderNode(BlockPos pos, float yawDegrees, int light) {
-        // JSON model: element [from, to] (0~16)
-        renderElement(pos, yawDegrees, light, CUBE_WOOD,  0, 0, 6,  16, 1, 10);
-        renderElement(pos, yawDegrees, light, CUBE_METAL, 1, 1, 7,   2,12,  9);
-        renderElement(pos, yawDegrees, light, CUBE_METAL,14, 1, 7,  15,12,  9);
-        renderElement(pos, yawDegrees, light, CUBE_METAL, 0,12, 7.5, 16,16,8.5);
+    private void renderNode(BlockPos pos, float yawDegrees, int light, double offX, double offY, double offZ) {
+        renderElement(pos, yawDegrees, light, CUBE_WOOD,  0, 0, 6,  16, 1, 10, offX, offY, offZ);
+        renderElement(pos, yawDegrees, light, CUBE_METAL, 1, 1, 7,   2,12,  9, offX, offY, offZ);
+        renderElement(pos, yawDegrees, light, CUBE_METAL,14, 1, 7,  15,12,  9, offX, offY, offZ);
+        renderElement(pos, yawDegrees, light, CUBE_METAL, 0,12, 7.5, 16,16,8.5, offX, offY, offZ);
     }
 
     private void renderElement(BlockPos pos, float yawDegrees, int light, ModelSmallCube cube,
                                double minX, double minY, double minZ,
-                               double maxX, double maxY, double maxZ) {
+                               double maxX, double maxY, double maxZ,
+                               double offX, double offY, double offZ) { // ★ 引数追加
 
-        // ブロックの中心 (X+0.5, Y+0.5, Z+0.5) を全体の基準原点にする
+        // ★ 修正: オフセットを加算して描画基準点をずらす
         StoredMatrixTransformations transforms = new StoredMatrixTransformations(
-                pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D
+                pos.getX() + 0.5D + offX, pos.getY() + 0.5D + offY, pos.getZ() + 0.5D + offZ
         );
 
-        // ModelSmallCube は 8x8x8 サイズなので、目標サイズを 8.0 で割る
         float scaleX = (float) ((maxX - minX) / 8.0D);
         float scaleY = (float) ((maxY - minY) / 8.0D);
         float scaleZ = (float) ((maxZ - minZ) / 8.0D);
 
-        // ブロック中心 (8, 8, 8) から見たパーツ中心の位置オフセット (16で割って0~1の空間へ)
         double offsetX = ((minX + maxX) / 2.0D - 8.0D) / 16.0D;
         double offsetY = ((minY + maxY) / 2.0D - 8.0D) / 16.0D;
         double offsetZ = ((minZ + maxZ) / 2.0D - 8.0D) / 16.0D;
 
         transforms.add(g -> {
-            // 1. ブロック中心軸で回転
             g.rotateYDegrees(yawDegrees);
-
-            // 2. パーツごとの中心位置へ移動
             g.translate(offsetX, offsetY, offsetZ);
-
-            // 3. パーツの大きさにスケール
             g.scale(scaleX, scaleY, scaleZ);
-
-            // 4. ModelSmallCube の元々の中心 (0.5, 0.5, 0.5) を原点に移動してスケールを効かせる
             g.translate(-0.5D, -0.5D, -0.5D);
         });
 

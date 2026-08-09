@@ -39,17 +39,19 @@ public abstract class RenderRailsNodeRotationMixin {
 
                 if (be != null && be.data instanceof StraightNodeBlockEntity nodeBe && nodeBe.isBound()) {
 
+                    // ★ 追加: オフセット値の取得
+                    double offX = nodeBe.getOffsetX();
+                    double offY = nodeBe.getOffsetY();
+                    double offZ = nodeBe.getOffsetZ();
+
+                    // ★ 修正: オフセット値を基準座標に加算する
                     final StoredMatrixTransformations storedMatrixTransformations = new StoredMatrixTransformations(
-                            blockPos.getX() + 0.5,
-                            blockPos.getY(),
-                            blockPos.getZ() + 0.5
+                            blockPos.getX() + 0.5 + offX,
+                            blockPos.getY() + offY,
+                            blockPos.getZ() + 0.5 + offZ
                     );
 
                     storedMatrixTransformations.add(graphicsHolder -> {
-                        // 【最終修正】スライダーを右に動かしたとき、モデルも右回り（時計回り）に回転するようにする
-                        // MTRノードモデルのデフォルトは「北」を向いている。
-                        // 東(0°)を向かせるには、右回りに90°回転させる必要がある。
-                        // Minecraftの rotateYDegrees は正の値で「左回り」なので、右回りに90°回転させるには -90.0F を指定する。
                         float renderAngle = -(float) nodeBe.getAngleDegrees() - 90.0F;
 
                         graphicsHolder.rotateYDegrees(renderAngle);
