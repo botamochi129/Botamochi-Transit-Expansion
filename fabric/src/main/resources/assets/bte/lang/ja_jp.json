@@ -1,8 +1,23 @@
 {
   "block.bte.straight_node": "直線ノード",
-  "block.bte.straight_node.desc": "任意の角度に設定可能なレールノード",
-  "gui.bte.angle_screen.title": "角度調整",
-  "gui.bte.angle_screen.current": "現在: %d°",
-  "gui.bte.angle_screen.done": "完了",
-  "item.bte.straight_node.angle_format": "%s (角度: %.1f°)"
+  "block.bte.straight_node.desc": "任意の角度とオフセットに設定可能なレールノード",
+
+  "item.bte.straight_node.format": "%s (%s)",
+
+  "gui.bte.angle_screen.title": "直線ノードの設定",
+  "gui.bte.angle_screen.hint_exact": "詳細: -180°〜180°、0°=東",
+  "gui.bte.angle_screen.hint_simple": "簡易: 0°〜180°、自動選択",
+  "gui.bte.angle_screen.status_connected": "状態: 接続済み",
+  "gui.bte.angle_screen.status_bound": "状態: 角度固定",
+  "gui.bte.angle_screen.status_unbound": "状態: 未固定",
+  "gui.bte.angle_screen.angle_value": "角度: %.1f°",
+  "gui.bte.angle_screen.angle_unbound": "角度: 未固定",
+  "gui.bte.angle_screen.rail_properties": "レールのプロパティ",
+  "gui.bte.angle_screen.no_connected_rails": "接続されているレールはありません",
+  "gui.bte.angle_screen.rail_info": "レール %d/%d (接続先: %d, %d, %d)",
+  "gui.bte.angle_screen.node_offset": "ノードのオフセット (X, Y, Z)",
+  "gui.bte.angle_screen.unbind": "固定を解除",
+  "gui.bte.angle_screen.exact_angle": "詳細な角度指定",
+  "gui.bte.angle_screen.checkbox_exact": "詳細な角度 (-180°〜180°)",
+  "gui.bte.angle_screen.checkbox_simple": "簡易な角度 (0°〜180°、自動選択)"
 }

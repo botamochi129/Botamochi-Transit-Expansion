@@ -2,6 +2,7 @@ package botamochi129.bte.mod.block.entity;
 
 import botamochi129.bte.mapping.LoaderImpl;
 import botamochi129.bte.mod.data.IRailMathExtra;
+import botamochi129.bte.mod.data.NodeGeometry;
 import botamochi129.bte.mod.registry.Blocks;
 import org.mtr.core.data.Data;
 import org.mtr.core.data.Position;
@@ -30,6 +31,8 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
 
     public static final double UNBOUND_SENTINEL = -129129.0;
 
+    public static final Map<String, double[]> RAIL_MATH_DATA_MAP = new java.util.concurrent.ConcurrentHashMap<>();
+
     private double angleDegrees = UNBOUND_SENTINEL;
     private boolean needsInitialUpdate = true;
     private int tickCount = 0;
@@ -48,8 +51,6 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
     }
 
     public void tick() {
-        // 【修正】Rail.copy 等でレールオブジェクトが差し替えられるとベジェが消えるため、
-        // サーバー側で定期的に再適用して自己修復する（bte$enableBezier は同値なら短絡するので軽量）
         World world = getWorld2();
         if (world == null || world.isClient() || !isBound()) return;
 
@@ -61,12 +62,25 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         }
     }
 
-    public double getAngleDegrees() { return angleDegrees; }
-    public boolean isBound() { return angleDegrees != UNBOUND_SENTINEL; }
+    public double getAngleDegrees() {
+        return angleDegrees;
+    }
 
-    public double getOffsetX() { return offsetX; }
-    public double getOffsetY() { return offsetY; }
-    public double getOffsetZ() { return offsetZ; }
+    public boolean isBound() {
+        return angleDegrees != UNBOUND_SENTINEL;
+    }
+
+    public double getOffsetX() {
+        return offsetX;
+    }
+
+    public double getOffsetY() {
+        return offsetY;
+    }
+
+    public double getOffsetZ() {
+        return offsetZ;
+    }
 
     public void setOffset(double x, double y, double z) {
         this.offsetX = Math.max(-1.0, Math.min(1.0, x));
@@ -101,7 +115,7 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         if (data == null) return;
 
         Position nodePos = Init.blockPosToPosition(getPos2());
-        double selfDeg = this.angleDegrees;
+        double selfAxis = this.angleDegrees; // 0~180 の軸
 
         Map<Position, Rail> railsAtPos = data.positionsToRail.get(nodePos);
         if (railsAtPos == null) return;
@@ -111,28 +125,36 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             Rail rail = entry.getValue();
             if (rail == null || rail.railMath == null) continue;
 
-            float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
-                    otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX()));
-            float reverseGeoAngleDeg = (float) Math.toDegrees(Math.atan2(
-                    nodePos.getZ() - otherPos.getZ(), nodePos.getX() - otherPos.getX()));
+            long x1 = Math.min(nodePos.getX(), otherPos.getX());
+            long y1 = Math.min(nodePos.getY(), otherPos.getY());
+            long z1 = Math.min(nodePos.getZ(), otherPos.getZ());
+            long x2 = Math.max(nodePos.getX(), otherPos.getX());
+            long y2 = Math.max(nodePos.getY(), otherPos.getY());
+            long z2 = Math.max(nodePos.getZ(), otherPos.getZ());
+            String railMathKey = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
 
             BlockPos otherBlockPos = Init.positionToBlockPos(otherPos);
-            double otherDeg = BlockNode.getAngle(world.getBlockState(otherBlockPos));
+            double otherAxis = BlockNode.getAngle(world.getBlockState(otherBlockPos)); // MTR標準ノードも軸として扱う
             double otherOffX = 0, otherOffY = 0, otherOffZ = 0;
 
             BlockEntity rawBe = world.getBlockEntity(otherBlockPos);
             if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity snbe && snbe.isBound()) {
-                otherDeg = snbe.getAngleDegrees();
+                otherAxis = snbe.getAngleDegrees(); // 0~180 の軸
                 otherOffX = snbe.getOffsetX();
                 otherOffY = snbe.getOffsetY();
                 otherOffZ = snbe.getOffsetZ();
             }
 
-            double correctedSelfDeg = Angle.similarFacing((float) selfDeg, geoAngleDeg) ? selfDeg : selfDeg + 180;
-            double correctedOtherDeg = Angle.similarFacing((float) otherDeg, reverseGeoAngleDeg) ? otherDeg : otherDeg + 180;
+            float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
+                    otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX()));
+            float reverseGeoAngleDeg = geoAngleDeg + 180.0f;
 
-            double startRad = Math.toRadians(correctedSelfDeg);
-            double endRad = Math.toRadians(correctedOtherDeg);
+            // ★ 動的に最適な出口を選択 (軸から +0° か +180° かを決める)
+            double selfExit = NodeGeometry.chooseBestExit(selfAxis, geoAngleDeg);
+            double otherExit = NodeGeometry.chooseBestExit(otherAxis, reverseGeoAngleDeg);
+
+            double startRad = Math.toRadians(selfExit);
+            double endRad = Math.toRadians(otherExit);
             double verticalRadius = rail.railMath.getVerticalRadius();
             Rail.Shape shape = rail.railMath.getShape();
 
@@ -146,6 +168,16 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             if (rail.railMath instanceof IRailMathExtra mathExtra) {
                 mathExtra.bte$enableBezier(startVec, startRad, endVec, endRad, verticalRadius, shape);
             }
+
+            double[] dataToSave = new double[]{
+                    startVec.x(), startVec.y(), startVec.z(),
+                    endVec.x(), endVec.y(), endVec.z(),
+                    startRad, endRad,
+                    verticalRadius, shape.ordinal(),
+                    nodePos.getX(), nodePos.getZ(),
+                    otherPos.getX(), otherPos.getZ()
+            };
+            RAIL_MATH_DATA_MAP.put(railMathKey, dataToSave);
         }
     }
 
@@ -171,7 +203,6 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         }
     }
 
-    // 【重要】MTRデータへの直接介入は行わず、RailMath インスタンスへベジェを伝えるのみ
     public void updateConnectedRails(boolean updateSimulation) {
         updateBezierDataOnly();
     }
@@ -205,6 +236,7 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
     public void writeCompoundTag(CompoundTag tag) {
         super.writeCompoundTag(tag);
         if (isBound()) {
+            // ★ 修正: % 180.0 に戻し、「軸」として保存する
             double normalizedAngle = angleDegrees % 180.0;
             if (normalizedAngle < 0.0) normalizedAngle += 180.0;
             tag.putDouble(KEY_ANGLE, normalizedAngle);

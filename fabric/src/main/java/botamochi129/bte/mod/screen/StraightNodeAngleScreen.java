@@ -40,7 +40,6 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private boolean isConnected;
     private double currentAngle;
 
-    // 角度調整用UI
     private ButtonWidgetExtension btnReturn;
     private ButtonWidgetExtension btnMode;
     private ButtonWidgetExtension btnUnbind;
@@ -49,11 +48,10 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private TextFieldWidgetExtension textField;
     private boolean sliderMode = true;
 
-    // === レール選択・属性調整用UI ===
     private List<Rail> connectedRails = new ArrayList<>();
     private int selectedRailIndex = 0;
     private ButtonWidgetExtension btnPrevRail, btnNextRail;
-    private List<Position> connectedTargetPositions = new ArrayList<>(); // ★ 追加: 接続先の座標リスト
+    private List<Position> connectedTargetPositions = new ArrayList<>();
     private boolean hasRails = false;
 
     private Rail.Shape currentShape = Rail.Shape.QUADRATIC;
@@ -67,15 +65,12 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private TextFieldWidgetExtension textFieldRadius;
     private ButtonWidgetExtension btnMinus10, btnMinus1, btnMinus01;
     private ButtonWidgetExtension btnPlus01, btnPlus1, btnPlus10;
-    // ================================
 
-    // === Offset XYZ 用UI ===
     private double offsetX = 0.0, offsetY = 0.0, offsetZ = 0.0;
     private boolean sliderModeX = true, sliderModeY = true, sliderModeZ = true;
     private SliderWidgetExtension sliderX, sliderY, sliderZ;
     private TextFieldWidgetExtension textFieldX, textFieldY, textFieldZ;
     private ButtonWidgetExtension btnModeX, btnModeY, btnModeZ;
-    // ================================
 
     private static final double SIMPLE_MAX_ANGLE = 180.0;
     private static final double SIMPLE_MIN_ANGLE = 0.0;
@@ -85,7 +80,8 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private boolean isExactMode = false;
 
     public StraightNodeAngleScreen(BlockPos blockPos, World world, BlockPos targetPos) {
-        super("Straight Node Configuration");
+        // ★ 修正: タイトルを言語キーから取得
+        super(TextHelper.translatable("gui.bte.angle_screen.title").getString());
         this.blockPos = blockPos;
         this.world = world;
         this.targetBlockPos = targetPos;
@@ -114,7 +110,6 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         int w = Math.min(getWidthMapped() - 40, 360);
         int rowH = 18;
 
-        // === レールと接続先座標の取得 ===
         connectedRails.clear();
         connectedTargetPositions.clear();
         try {
@@ -149,7 +144,6 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             }
         }
 
-        // フォールバック: 渡されていない（または見つからない）場合は、従来の視線ベクトル計算を使う
         if (!foundTarget) {
             org.mtr.mapping.holder.ClientPlayerEntity player = MinecraftClient.getInstance().getPlayerMapped();
             if (player != null && !connectedTargetPositions.isEmpty()) {
@@ -191,7 +185,6 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         updateRailPropsFromConnected();
         double initialDisplay = getInitialDisplayAngle();
 
-        // === 1. 角度調整セクション ===
         slider = new SliderWidgetExtension(cx - w / 2, cy - 40, w - 24, rowH, String.format("%.1f°", initialDisplay)) {
             @Override
             public void applyValue2() {
@@ -230,14 +223,12 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         btnMode = new ButtonWidgetExtension(cx + w / 2 - 22, cy - 40, 20, rowH, "⇄", btn -> switchMode());
         addChild(new ClickableWidget(btnMode));
 
-        // === 2. レール選択セクション ===
         int railSelectY = cy - 18;
         btnPrevRail = new ButtonWidgetExtension(cx - w / 2, railSelectY, 20, rowH, "<", btn -> selectRail(selectedRailIndex - 1));
         btnNextRail = new ButtonWidgetExtension(cx + w / 2 - 20, railSelectY, 20, rowH, ">", btn -> selectRail(selectedRailIndex + 1));
         addChild(new ClickableWidget(btnPrevRail));
         addChild(new ClickableWidget(btnNextRail));
 
-        // === 3. レール属性調整セクション (Rail Properties) ===
         int railY = cy + 4;
         int btnW = w / 3;
 
@@ -257,7 +248,6 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         btnStyleFlip = new ButtonWidgetExtension(cx - w / 2 + btnW * 2, railY, btnW, rowH, TranslationProvider.GUI_MTR_FLIP_STYLES.getMutableText(), btn -> flipStyles());
         addChild(new ClickableWidget(btnStyleFlip));
 
-        // Radius 調整
         int radiusY = railY + rowH + 4;
         int radiusBtnW = 24;
         int textFieldW = w - radiusBtnW * 6 - 6;
@@ -283,8 +273,6 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             } catch (Exception ignored) {}
         });
 
-        // === 4. Offset XYZ セクション ===
-        // 未接続（レールなし）の場合はレール属性セクションを非表示にし、Offsetを上へ詰める
         int offY = hasRails ? radiusY + rowH + 10 : railSelectY;
         int mainW = w - 24;
 
@@ -292,17 +280,18 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         setupOffsetUI(cx, w, mainW, offY + rowH + 2, rowH, 1);
         setupOffsetUI(cx, w, mainW, offY + (rowH + 2) * 2, rowH, 2);
 
-        // === 5. 基本ボタン (下部) ===
         int bottomY = offY + (rowH + 2) * 3 + 6;
 
         btnReturn = new ButtonWidgetExtension(cx - w / 2, bottomY, 20, rowH, "X", btn -> onClose2());
         addChild(new ClickableWidget(btnReturn));
 
-        btnUnbind = new ButtonWidgetExtension(cx - w / 2 + 24, bottomY, 60, rowH, TextHelper.literal("Unbind"), btn -> unbind());
+        // ★ 修正: Unbind ボタンのラベルを言語キー化
+        btnUnbind = new ButtonWidgetExtension(cx - w / 2 + 24, bottomY, 60, rowH, TextHelper.translatable("gui.bte.angle_screen.unbind"), btn -> unbind());
         btnUnbind.setActiveMapped(isBound);
         addChild(new ClickableWidget(btnUnbind));
 
-        chkExactMode = new CheckboxWidgetExtension(cx - w / 2 + 90, bottomY, 200, rowH, "Exact Angle", isExactMode, isChecked -> {
+        // ★ 修正: チェックボックスのラベルを言語キー化
+        chkExactMode = new CheckboxWidgetExtension(cx - w / 2 + 90, bottomY, 200, rowH, TextHelper.translatable("gui.bte.angle_screen.exact_angle").getString(), isExactMode, isChecked -> {
             isExactMode = isChecked; updateModeUI();
         });
         addChild(new ClickableWidget(chkExactMode));
@@ -427,7 +416,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
 
     private void updateRailProperties(double newRadius, boolean sendPacket) {
         setRailPropsVisible(hasRails);
-        btnShape.setMessage2(Text.cast((currentShape == Rail.Shape.QUADRATIC ? TranslationProvider.GUI_MTR_RAIL_SHAPE_QUADRATIC : TranslationProvider.GUI_MTR_RAIL_SHAPE_TWO_RADII).getMutableText()));
+        btnShape.setMessage2((currentShape == Rail.Shape.QUADRATIC ? TranslationProvider.GUI_MTR_RAIL_SHAPE_QUADRATIC : TranslationProvider.GUI_MTR_RAIL_SHAPE_TWO_RADII).getText());
 
         currentRadius = Utilities.clamp(Utilities.round(newRadius, 2), 0, maxRadius);
 
@@ -473,7 +462,8 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         slider.setVisibleMapped(sliderMode);
         textField.setVisible2(!sliderMode);
         btnMode.setMessage2(Text.of(sliderMode ? "⇄" : "📝"));
-        chkExactMode.setMessage2(Text.of(isExactMode ? "Exact Angle (-180° to 180°)" : "Simple Angle (0° to 180°, Auto-select)"));
+        // ★ 修正: チェックボックスの横のテキストも言語キー化
+        chkExactMode.setMessage2(Text.cast(TextHelper.translatable(isExactMode ? "gui.bte.angle_screen.checkbox_exact" : "gui.bte.angle_screen.checkbox_simple")));
     }
 
     private void updateModeUI() {
@@ -528,7 +518,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         this.currentAngle = UNBOUND_SENTINEL;
         this.isBound = false;
         updateUIState();
-        textField.setText2("Unbound");
+        textField.setText2(TextHelper.translatable("gui.bte.angle_screen.angle_unbound").getString());
         slider.setMessage2(Text.of("0.0°"));
         slider.setValueMapped(0.0);
         BTERegistryClient.sendPacketToServer(new PacketUpdateStraightNodeAngle(blockPos, UNBOUND_SENTINEL, offsetX, offsetY, offsetZ));
@@ -611,36 +601,37 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         int cy = getHeightMapped() / 2;
         int w = Math.min(getWidthMapped() - 40, 360);
 
-        graphicsHolder.drawCenteredText("Straight Node Configuration", cx, cy - 70, 0xFFFFFF);
+        // ★ 修正: String.valueOf() ではなく .getString() を使用して翻訳済み文字列を取得する
+        // String.valueOf(Text) は Text.toString() を呼び出してしまい、
+        // 翻訳済み文字列ではなく「言語キーそのもの」や「オブジェクトのハッシュ値」が表示される原因になります。
 
-        String hint = isExactMode ? "Exact: -180° to 180°, 0°=East" : "Simple: 0° to 180°, Auto-select";
-        graphicsHolder.drawCenteredText(hint, cx, cy - 60, 0xAAAAAA);
+        graphicsHolder.drawCenteredText(TextHelper.translatable("gui.bte.angle_screen.title").getString(), cx, cy - 70, 0xFFFFFF);
 
-        String status;
+        Text hint = Text.cast(isExactMode ? TextHelper.translatable("gui.bte.angle_screen.hint_exact") : TextHelper.translatable("gui.bte.angle_screen.hint_simple"));
+        graphicsHolder.drawCenteredText(hint.getString(), cx, cy - 60, 0xAAAAAA);
+
+        Text status;
         int statusColor;
-        if (isConnected) { status = "Status: Connected"; statusColor = 0x55FF55; }
-        else if (isBound) { status = "Status: Bound"; statusColor = 0xFFFF55; }
-        else { status = "Status: Unbound"; statusColor = 0xFF5555; }
-        graphicsHolder.drawCenteredText(status, cx, cy - 50, statusColor);
+        if (isConnected) { status = Text.cast(TextHelper.translatable("gui.bte.angle_screen.status_connected")); statusColor = 0x55FF55; }
+        else if (isBound) { status = Text.cast(TextHelper.translatable("gui.bte.angle_screen.status_bound")); statusColor = 0xFFFF55; }
+        else { status = Text.cast(TextHelper.translatable("gui.bte.angle_screen.status_unbound")); statusColor = 0xFF5555; }
+        graphicsHolder.drawCenteredText(status.getString(), cx, cy - 50, statusColor);
 
         double displayAngle = isBound ? (isExactMode ? toExactUI(currentAngle) : toSimpleUI(currentAngle)) : 0.0;
-        String angleText = isBound ? String.format("Angle: %.1f\u00B0", displayAngle) : "Angle: Unbound";
-        graphicsHolder.drawCenteredText(angleText, cx, cy - 40, 0xFFFFFF);
+        Text angleText = Text.cast(isBound ? TextHelper.translatable("gui.bte.angle_screen.angle_value", displayAngle) : TextHelper.translatable("gui.bte.angle_screen.angle_unbound"));
+        graphicsHolder.drawCenteredText(angleText.getString(), cx, cy - 40, 0xFFFFFF);
 
         if (hasRails) {
-            graphicsHolder.drawText(TextHelper.literal("Rail Properties"), cx - w / 2, cy - 22, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
-            // ★ 修正: Railのフィールドには触れず、Mapのキーだった接続先座標を直接使う
+            graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.rail_properties").getString(), cx - w / 2, cy - 22, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
             Position targetPos = connectedTargetPositions.get(selectedRailIndex);
             BlockPos otherPos = Init.positionToBlockPos(targetPos);
-            String railInfo = String.format("Rail %d/%d (to %d, %d, %d)", selectedRailIndex + 1, connectedRails.size(), otherPos.getX(), otherPos.getY(), otherPos.getZ());
-            graphicsHolder.drawText(TextHelper.literal(railInfo), cx - w / 2 + 24, cy - 18 + 4, 0xAAAAAA, false, GraphicsHolder.getDefaultLight());
+            graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.rail_info", selectedRailIndex + 1, connectedRails.size(), otherPos.getX(), otherPos.getY(), otherPos.getZ()).getString(), cx - w / 2 + 24, cy - 18 + 4, 0xAAAAAA, false, GraphicsHolder.getDefaultLight());
         } else {
-            graphicsHolder.drawText(TextHelper.literal("No connected rails"), cx - w / 2 + 24, cy - 18 + 4, 0xFF5555, false, GraphicsHolder.getDefaultLight());
+            graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.no_connected_rails").getString(), cx - w / 2 + 24, cy - 18 + 4, 0xFF5555, false, GraphicsHolder.getDefaultLight());
         }
 
-        // Offset ラベル
         int offLabelY = hasRails ? (cy + 54) : (cy - 18 + 4);
-        graphicsHolder.drawText(TextHelper.literal("Node Offset (X, Y, Z)"), cx - w / 2, offLabelY - 4, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
+        graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.node_offset").getString(), cx - w / 2, offLabelY - 4, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
     }
 
     private void apply() {

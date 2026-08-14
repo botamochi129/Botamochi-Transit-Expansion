@@ -3,8 +3,10 @@
   "package": "botamochi129.bte.mixin",
   "compatibilityLevel": "JAVA_16",
   "mixins": [
+    "mtr.AngleMixin",
     "mtr.ItemNodeModifierBaseMixin",
     "mtr.ItemRailModifierMixin",
+    "mtr.PathDataMixin",
     "mtr.RailMathMixin",
     "mtr.RenderRailsNodeRotationMixin",
     "mtr.RenderRailsMixin"

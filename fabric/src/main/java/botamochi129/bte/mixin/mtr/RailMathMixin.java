@@ -1,9 +1,12 @@
 package botamochi129.bte.mixin.mtr;
 
+import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
 import botamochi129.bte.mod.data.BezierCurve;
 import botamochi129.bte.mod.data.IRailMathExtra;
+import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
 import org.mtr.core.data.RailMath;
+import org.mtr.core.tool.Angle;
 import org.mtr.core.tool.Vector;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -23,6 +26,73 @@ public abstract class RailMathMixin implements IRailMathExtra {
     @Unique private Vector bte$endPos = null;
     @Unique private double bte$savedVerticalRadius = 0;
     @Unique private Rail.Shape bte$savedShape = Rail.Shape.QUADRATIC;
+
+    @Inject(
+            method = "<init>(Lorg/mtr/core/data/Position;Lorg/mtr/core/tool/Angle;Lorg/mtr/core/data/Position;Lorg/mtr/core/tool/Angle;Lorg/mtr/core/data/Rail$Shape;D)V",
+            at = @At("RETURN")
+    )
+    private void bte$capturePositions(
+            Position position1, Angle angle1, Position position2, Angle angle2, Rail.Shape shape, double verticalRadius, CallbackInfo ci
+    ) {
+        long x1 = Math.min(position1.getX(), position2.getX());
+        long y1 = Math.min(position1.getY(), position2.getY());
+        long z1 = Math.min(position1.getZ(), position2.getZ());
+        long x2 = Math.max(position1.getX(), position2.getX());
+        long y2 = Math.max(position1.getY(), position2.getY());
+        long z2 = Math.max(position1.getZ(), position2.getZ());
+        String key = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
+
+        double[] existingData = StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.get(key);
+
+        if (existingData != null && existingData.length >= 14) {
+            Vector startPos = new Vector(existingData[0], existingData[1], existingData[2]);
+            Vector endPos = new Vector(existingData[3], existingData[4], existingData[5]);
+            double startRad = existingData[6];
+            double endRad = existingData[7];
+            double vRad = existingData[8];
+
+            Rail.Shape s = Rail.Shape.QUADRATIC;
+            int shapeOrdinal = (int) existingData[9];
+            for (Rail.Shape rs : Rail.Shape.values()) {
+                if (rs.ordinal() == shapeOrdinal) { s = rs; break; }
+            }
+
+            this.bte$enableBezier(startPos, startRad, endPos, endRad, vRad, s);
+            existingData[8] = verticalRadius;
+            existingData[9] = shape.ordinal();
+
+        } else if (existingData != null && existingData.length >= 10) {
+            double[] newData = new double[14];
+            System.arraycopy(existingData, 0, newData, 0, 10);
+            newData[10] = position1.getX();
+            newData[11] = position1.getZ();
+            newData[12] = position2.getX();
+            newData[13] = position2.getZ();
+            StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.put(key, newData);
+
+            Vector startPos = new Vector(newData[0], newData[1], newData[2]);
+            Vector endPos = new Vector(newData[3], newData[4], newData[5]);
+            double startRad = newData[6];
+            double endRad = newData[7];
+            this.bte$enableBezier(startPos, startRad, endPos, endRad, verticalRadius, shape);
+
+        } else {
+            // ★ 修正: デフォルト0度ではなく、Rail生成時に渡されたAngleを使用する
+            // これにより、MTR標準ノードの角度も正しくベジェデータに反映される
+            double startDeg = angle1 != null ? angle1.angleDegrees : 0.0;
+            double endDeg = angle2 != null ? angle2.angleDegrees : 0.0;
+
+            double[] newData = new double[]{
+                    position1.getX() + 0.5, position1.getY(), position1.getZ() + 0.5,
+                    position2.getX() + 0.5, position2.getY(), position2.getZ() + 0.5,
+                    Math.toRadians(startDeg), Math.toRadians(endDeg), // ★ Angleをラジアンに変換
+                    verticalRadius, shape.ordinal(),
+                    (double) position1.getX(), (double) position1.getZ(),
+                    (double) position2.getX(), (double) position2.getZ()
+            };
+            StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.put(key, newData);
+        }
+    }
 
     @Unique
     private BezierCurve bte$getActiveCurve() {
