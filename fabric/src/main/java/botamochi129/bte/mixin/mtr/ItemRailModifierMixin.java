@@ -2,6 +2,7 @@ package botamochi129.bte.mixin.mtr;
 
 import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
 import botamochi129.bte.mod.data.IRailMathExtra;
+import botamochi129.bte.mod.data.NodeGeometry; // ★ 追加: ジオメトリユーティリティ
 import org.mtr.core.data.Rail;
 import org.mtr.core.data.TransportMode;
 import org.mtr.core.tool.Angle;
@@ -11,6 +12,7 @@ import org.mtr.mapping.holder.BlockPos;
 import org.mtr.mapping.holder.BlockState;
 import org.mtr.mapping.holder.ClientWorld;
 import org.mtr.mapping.holder.MinecraftClient;
+import org.mtr.mod.block.BlockNode; // ★ 追加: 標準ノード角度取得用
 import org.mtr.mod.item.ItemRailModifier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -43,61 +45,70 @@ public abstract class ItemRailModifierMixin {
         int y2 = posEndMapped.getY();
         int z2 = posEndMapped.getZ();
 
-        // 幾何学的な進行方向を計算
-        double geoAngleStart = Math.toDegrees(Math.atan2(z2 - z1, x2 - x1));
-        double geoAngleEnd = Math.toDegrees(Math.atan2(z1 - z2, x1 - x2));
-
-        geoAngleStart = normalize360(geoAngleStart);
-        geoAngleEnd = normalize360(geoAngleEnd);
-
-        double startDeg = facingStart.angleDegrees;
-        double endDeg = facingEnd.angleDegrees;
-
         BlockPos p1 = new BlockPos(x1, y1, z1);
         BlockPos p2 = new BlockPos(x2, y2, z2);
 
+        // 1. オフセットと固定角度（バインド済み or 標準ノード）の取得
+        double offX1 = 0, offY1 = 0, offZ1 = 0;
+        double offX2 = 0, offY2 = 0, offZ2 = 0;
+        Double fixedStart = null;
+        Double fixedEnd = null;
+
         BlockEntity be1 = world.getBlockEntity(p1);
         if (be1 != null && be1.data instanceof StraightNodeBlockEntity sn1) {
-            if (sn1.isBound()) {
-                startDeg = sn1.getAngleDegrees();
-            } else {
-                if (!Angle.similarFacing((float) geoAngleStart, (float) startDeg)) {
-                    startDeg = normalize360(startDeg + 180.0);
-                }
-            }
+            offX1 = sn1.getOffsetX(); offY1 = sn1.getOffsetY(); offZ1 = sn1.getOffsetZ();
+            if (sn1.isBound()) fixedStart = sn1.getAngleDegrees();
+        } else if (be1 == null) {
+            fixedStart = (double) BlockNode.getAngle(stateStart); // MTR標準ノード
         }
 
         BlockEntity be2 = world.getBlockEntity(p2);
         if (be2 != null && be2.data instanceof StraightNodeBlockEntity sn2) {
-            if (sn2.isBound()) {
-                endDeg = sn2.getAngleDegrees();
-            } else {
-                if (!Angle.similarFacing((float) geoAngleEnd, (float) endDeg)) {
-                    endDeg = normalize360(endDeg + 180.0);
-                }
-            }
+            offX2 = sn2.getOffsetX(); offY2 = sn2.getOffsetY(); offZ2 = sn2.getOffsetZ();
+            if (sn2.isBound()) fixedEnd = sn2.getAngleDegrees();
+        } else if (be2 == null) {
+            fixedEnd = (double) BlockNode.getAngle(stateEnd);
         }
 
-        Vector startVec = new Vector(x1 + 0.5, y1, z1 + 0.5);
-        Vector endVec = new Vector(x2 + 0.5, y2, z2 + 0.5);
+        // 2. 角度決定ロジック (ItemNodeModifierBaseMixin と完全に同じ基準)
+        double nodeStartDeg;
+        if (fixedStart != null) {
+            nodeStartDeg = fixedStart;
+        } else if (fixedEnd != null) {
+            nodeStartDeg = NodeGeometry.maxRadiusTangentAngle(p2, fixedEnd, p1);
+        } else {
+            nodeStartDeg = NodeGeometry.straightAngle(p1, p2);
+        }
+
+        double nodeEndDeg;
+        if (fixedEnd != null) {
+            nodeEndDeg = fixedEnd;
+        } else if (fixedStart != null) {
+            nodeEndDeg = NodeGeometry.maxRadiusTangentAngle(p1, fixedStart, p2);
+        } else {
+            nodeEndDeg = NodeGeometry.straightAngle(p2, p1);
+        }
+
+        // 3. レール用の向き補正 (±180°)
+        double geoAngle = NodeGeometry.straightAngle(p1, p2);
+        double railStartDeg = NodeGeometry.normalizeDegrees(nodeStartDeg + (Angle.similarFacing((float) geoAngle, (float) nodeStartDeg) ? 0 : 180));
+        double railEndDeg = NodeGeometry.normalizeDegrees(nodeEndDeg + (Angle.similarFacing((float) geoAngle, (float) nodeEndDeg) ? 180 : 0));
+
+        // 4. ベジェ適用 (オフセット適用済み座標を使用)
+        // ※ X/Zはブロック中心(+0.5), Yはブロック底面(+0)を基準とする
+        Vector startVec = new Vector(x1 + 0.5 + offX1, y1 + offY1, z1 + 0.5 + offZ1);
+        Vector endVec = new Vector(x2 + 0.5 + offX2, y2 + offY2, z2 + 0.5 + offZ2);
 
         if (rail.railMath instanceof IRailMathExtra mathExtra) {
-            // 【重要修正】rail から verticalRadius を取得し、5引数で呼び出す
             double verticalRadius = rail.railMath.getVerticalRadius();
             mathExtra.bte$enableBezier(
                     startVec,
-                    Math.toRadians(startDeg),
+                    Math.toRadians(railStartDeg),
                     endVec,
-                    Math.toRadians(endDeg),
+                    Math.toRadians(railEndDeg),
                     verticalRadius,
                     rail.railMath.getShape()
             );
         }
-    }
-
-    private static double normalize360(double angle) {
-        angle = angle % 360.0;
-        if (angle < 0.0) angle += 360.0;
-        return angle;
     }
 }

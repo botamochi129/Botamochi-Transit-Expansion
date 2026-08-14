@@ -1,9 +1,7 @@
 package botamochi129.bte.mapping;
 
-import botamochi129.bte.mod.data.AngleHelper;
 import net.fabricmc.loader.api.FabricLoader;
 import org.mtr.core.data.Data;
-import org.mtr.core.tool.Angle;
 import org.mtr.mapping.holder.*;
 import org.mtr.mod.Init;
 
@@ -18,13 +16,6 @@ import java.util.Optional;
 public class LoaderImpl {
     public static boolean isRainingAt(World world, BlockPos pos) {
         return world.data.hasRain(pos.data);
-    }
-
-    /**
-     * Creates a dynamic Angle instance from degrees via AngleHelper bridge.
-     */
-    public static Angle createDynamicAngle(String name, int ordinal, float degrees) {
-        return AngleHelper.createDynamicAngle(name, ordinal, degrees);
     }
 
     private static Field mainField;

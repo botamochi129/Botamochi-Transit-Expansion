@@ -78,31 +78,12 @@ public abstract class RenderRailsMixin {
                 }
 
                 if (hasStraightNode) {
-                    // ★ 修正: オフセット値を座標に加算する
+                    // ★ 修正: オフセット値を座標に加算する (X/Zはブロック中心+0.5, Yはブロック底面+0)
                     Vector startVec = new Vector(p1.getX() + 0.5 + offX1, p1.getY() + offY1, p1.getZ() + 0.5 + offZ1);
                     Vector endVec = new Vector(p2.getX() + 0.5 + offX2, p2.getY() + offY2, p2.getZ() + 0.5 + offZ2);
 
                     double verticalRadius = rail.railMath.getVerticalRadius();
                     Rail.Shape shape = rail.railMath.getShape();
-
-                    // キーはブロック座標(整数)で生成
-                    long x1 = p1.getX(), y1 = p1.getY(), z1 = p1.getZ();
-                    long x2 = p2.getX(), y2 = p2.getY(), z2 = p2.getZ();
-                    long minX = Math.min(x1, x2), minY = Math.min(y1, y2), minZ = Math.min(z1, z2);
-                    long maxX = Math.max(x1, x2), maxY = Math.max(y1, y2), maxZ = Math.max(z1, z2);
-
-                    String key = minX + "," + minY + "," + minZ + "," + maxX + "," + maxY + "," + maxZ;
-
-                    double[] dataToSave = new double[]{
-                            startVec.x(), startVec.y(), startVec.z(),
-                            endVec.x(), endVec.y(), endVec.z(),
-                            startRad, endRad,
-                            verticalRadius,
-                            shape.ordinal()
-                    };
-
-                    // 毎フレーム、クライアント側のマップを最新状態(オフセット適用済み)に更新
-                    StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.put(key, dataToSave);
 
                     if (rail.railMath instanceof IRailMathExtra mathExtra) {
                         mathExtra.bte$enableBezier(startVec, startRad, endVec, endRad, verticalRadius, shape);

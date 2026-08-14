@@ -54,6 +54,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private int selectedRailIndex = 0;
     private ButtonWidgetExtension btnPrevRail, btnNextRail;
     private List<Position> connectedTargetPositions = new ArrayList<>(); // ★ 追加: 接続先の座標リスト
+    private boolean hasRails = false;
 
     private Rail.Shape currentShape = Rail.Shape.QUADRATIC;
     private double currentRadius = 0.0;
@@ -133,6 +134,8 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         } catch (Exception e) {
             e.printStackTrace();
         }
+
+        hasRails = !connectedRails.isEmpty();
 
         boolean foundTarget = false;
         if (this.targetBlockPos != null) {
@@ -281,7 +284,8 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         });
 
         // === 4. Offset XYZ セクション ===
-        int offY = radiusY + rowH + 10;
+        // 未接続（レールなし）の場合はレール属性セクションを非表示にし、Offsetを上へ詰める
+        int offY = hasRails ? radiusY + rowH + 10 : railSelectY;
         int mainW = w - 24;
 
         setupOffsetUI(cx, w, mainW, offY, rowH, 0);
@@ -319,7 +323,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     }
 
     private void updateRailSelectionUI() {
-        boolean hasMultiple = connectedRails.size() > 1;
+        boolean hasMultiple = hasRails && connectedRails.size() > 1;
         btnPrevRail.setVisibleMapped(hasMultiple);
         btnNextRail.setVisibleMapped(hasMultiple);
     }
@@ -422,6 +426,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     }
 
     private void updateRailProperties(double newRadius, boolean sendPacket) {
+        setRailPropsVisible(hasRails);
         btnShape.setMessage2(Text.cast((currentShape == Rail.Shape.QUADRATIC ? TranslationProvider.GUI_MTR_RAIL_SHAPE_QUADRATIC : TranslationProvider.GUI_MTR_RAIL_SHAPE_TWO_RADII).getMutableText()));
 
         currentRadius = Utilities.clamp(Utilities.round(newRadius, 2), 0, maxRadius);
@@ -431,7 +436,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             textFieldRadius.setText2(radiusText);
         }
 
-        boolean hasRadiusControls = currentShape != Rail.Shape.QUADRATIC;
+        boolean hasRadiusControls = currentShape != Rail.Shape.QUADRATIC && hasRails;
         btnMinus10.setVisibleMapped(hasRadiusControls); btnMinus1.setVisibleMapped(hasRadiusControls); btnMinus01.setVisibleMapped(hasRadiusControls);
         btnPlus01.setVisibleMapped(hasRadiusControls); btnPlus1.setVisibleMapped(hasRadiusControls); btnPlus10.setVisibleMapped(hasRadiusControls);
 
@@ -439,6 +444,13 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         btnPlus01.setActiveMapped(currentRadius < maxRadius); btnPlus1.setActiveMapped(currentRadius < maxRadius); btnPlus10.setActiveMapped(currentRadius < maxRadius);
 
         if (sendPacket) applyRailPropertiesToServer();
+    }
+
+    private void setRailPropsVisible(boolean visible) {
+        btnShape.setVisibleMapped(visible);
+        btnStyle.setVisibleMapped(visible);
+        btnStyleFlip.setVisibleMapped(visible);
+        textFieldRadius.setVisibleMapped(visible);
     }
 
     private void applyRailPropertiesToServer() {
@@ -615,8 +627,8 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         String angleText = isBound ? String.format("Angle: %.1f\u00B0", displayAngle) : "Angle: Unbound";
         graphicsHolder.drawCenteredText(angleText, cx, cy - 40, 0xFFFFFF);
 
-        graphicsHolder.drawText(TextHelper.literal("Rail Properties"), cx - w / 2, cy - 22, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
-        if (!connectedRails.isEmpty()) {
+        if (hasRails) {
+            graphicsHolder.drawText(TextHelper.literal("Rail Properties"), cx - w / 2, cy - 22, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
             // ★ 修正: Railのフィールドには触れず、Mapのキーだった接続先座標を直接使う
             Position targetPos = connectedTargetPositions.get(selectedRailIndex);
             BlockPos otherPos = Init.positionToBlockPos(targetPos);
@@ -627,8 +639,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         }
 
         // Offset ラベル
-        int radiusY = cy + 26;
-        int offLabelY = radiusY + 18 + 10;
+        int offLabelY = hasRails ? (cy + 54) : (cy - 18 + 4);
         graphicsHolder.drawText(TextHelper.literal("Node Offset (X, Y, Z)"), cx - w / 2, offLabelY - 4, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
     }
 

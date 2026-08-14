@@ -1,12 +1,13 @@
 package botamochi129.bte.mixin.mtr;
 
 import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
-import org.mtr.core.data.Rail;
+import botamochi129.bte.mod.data.NodeGeometry;
 import org.mtr.core.data.TransportMode;
 import org.mtr.core.tool.Angle;
 import org.mtr.mapping.holder.BlockPos;
 import org.mtr.mapping.holder.BlockState;
 import org.mtr.mapping.holder.CompoundTag;
+import org.mtr.mapping.holder.ItemStack;
 import org.mtr.mapping.holder.ItemUsageContext;
 import org.mtr.mapping.holder.PlayerEntity;
 import org.mtr.mapping.holder.ServerPlayerEntity;
@@ -27,10 +28,14 @@ public abstract class ItemNodeModifierBaseMixin {
 
     @Shadow @Final protected boolean isConnector;
 
-    @Inject(method = "onEndClick", at = @At("RETURN"))
-    private void bte$onEndClick(ItemUsageContext context, BlockPos endBlockPos, CompoundTag tag, CallbackInfo ci) {
-        if (!isConnector || !tag.contains(TAG_TRANSPORT_MODE)) return;
+    @Shadow protected abstract void onConnect(World world, ItemStack stack, TransportMode transportMode,
+                                              BlockState state1, BlockState state2, BlockPos pos1, BlockPos pos2,
+                                              Angle angle1, Angle angle2, ServerPlayerEntity player);
 
+    @Shadow protected abstract void onRemove(World world, BlockPos pos1, BlockPos pos2, ServerPlayerEntity player);
+
+    @Inject(method = "onEndClick", at = @At("HEAD"), cancellable = true)
+    private void bte$onEndClick(ItemUsageContext context, BlockPos endBlockPos, CompoundTag tag, CallbackInfo ci) {
         World world = context.getWorld();
         BlockPos startBlockPos = context.getBlockPos();
         BlockState startState = world.getBlockState(startBlockPos);
@@ -40,57 +45,119 @@ public abstract class ItemNodeModifierBaseMixin {
             return;
         }
 
-        StraightNodeBlockEntity beStart = getStraightNodeBE(world, startBlockPos);
-        StraightNodeBlockEntity beEnd = getStraightNodeBE(world, endBlockPos);
+        PlayerEntity player = context.getPlayer();
+        if (!ServerPlayerEntity.isInstance(player)) return;
 
-        // 1. 「接続方向の絶対角度」を決定する
-        // 相手ノードの状態（MTR標準/Bound/Unbound）を最優先で尊重し、それに合わせる
-        double targetStartDeg = getTargetAngle(world, startBlockPos, endBlockPos, endState, beEnd, true);
-        double targetEndDeg = getTargetAngle(world, endBlockPos, startBlockPos, startState, beStart, false);
+        BlockNode startNode = (BlockNode) startState.getBlock().data;
+        if (!startNode.transportMode.toString().equals(tag.getString(TAG_TRANSPORT_MODE))) return;
 
-        // 2. StraightNodeであれば、その絶対角度に強制スナップ（バインド）する
-        // これにより、接続部は必ず直線（カーブ半径0）になる
-        if (beStart != null) {
-            beStart.bind(targetStartDeg);
-        }
-        if (beEnd != null) {
-            beEnd.bind(targetEndDeg);
-        }
+        if (isConnector) {
+            if (startBlockPos.equals(endBlockPos)) {
+                tag.remove(TAG_TRANSPORT_MODE);
+                ci.cancel();
+                return;
+            }
 
-        // 3. ベジェデータの更新
-        if (beStart != null) beStart.updateConnectedRails(true);
-        if (beEnd != null) beEnd.updateConnectedRails(true);
-    }
+            StraightNodeBlockEntity beStart = getStraightNodeBE(world, startBlockPos);
+            StraightNodeBlockEntity beEnd = getStraightNodeBE(world, endBlockPos);
 
-    /**
-     * 接続相手との「あるべき接続角度」を決定する
-     * 優先順: 1. MTR標準ノードの固定角度, 2. バインド済みStraightNodeの角度, 3. 幾何学方向（直線）
-     */
-    private double getTargetAngle(World world, BlockPos myPos, BlockPos otherPos,
-                                  BlockState otherState, StraightNodeBlockEntity otherBe,
-                                  boolean isStartNode) {
+            // 両方がStraightNodeでなければ、MTR標準のロジックに完全に委ねる
+            if (beStart == null && beEnd == null) {
+                return;
+            }
 
-        double baseAngle;
-        if (otherBe == null) {
-            // 相手がMTR標準ノードの場合、その固定角度を絶対基準とする
-            baseAngle = BlockNode.getAngle(otherState);
-        } else if (otherBe.isBound()) {
-            // 相手がバインド済みの場合、その角度を絶対基準とする
-            baseAngle = otherBe.getAngleDegrees();
+            boolean isStartBound = (beStart != null && beStart.isBound());
+            boolean isEndBound = (beEnd != null && beEnd.isBound());
+            boolean bothUnboundStraightNodes = (beStart != null && beEnd != null && !isStartBound && !isEndBound);
+
+            // 1. 角度の決定
+            //    - バインド済み → その確定角度を使用（上書きしない）
+            //    - 片側だけバインド → 確定角度に接する最大半径円弧の接線（滑らかな曲線）
+            //    - 両方未バインド → 2点を結ぶ直線の角度（直線優先）
+            double startDeg;
+            double endDeg;
+            boolean startIsTangent = false;
+            boolean endIsTangent = false;
+
+            if (isStartBound) {
+                startDeg = beStart.getAngleDegrees();
+            } else if (isEndBound) {
+                startDeg = NodeGeometry.maxRadiusTangentAngle(endBlockPos, beEnd.getAngleDegrees(), startBlockPos);
+                startIsTangent = true;
+            } else {
+                startDeg = NodeGeometry.straightAngle(startBlockPos, endBlockPos);
+            }
+
+            if (isEndBound) {
+                endDeg = beEnd.getAngleDegrees();
+            } else if (isStartBound) {
+                endDeg = NodeGeometry.maxRadiusTangentAngle(startBlockPos, beStart.getAngleDegrees(), endBlockPos);
+                endIsTangent = true;
+            } else {
+                endDeg = NodeGeometry.straightAngle(endBlockPos, startBlockPos);
+            }
+
+            // 2. MTR標準の similarFacing 補正
+            //    ※ 最大半径円弧の接線（既に進行方向に沿った角度）には適用しない
+            float geoAngleDeg = (float) normalize360(Math.toDegrees(Math.atan2(
+                    endBlockPos.getZ() - startBlockPos.getZ(),
+                    endBlockPos.getX() - startBlockPos.getX()
+            )));
+            float reverseGeoAngle = (float) normalize360(geoAngleDeg + 180.0);
+
+            if (!startIsTangent) {
+                if (!Angle.similarFacing(geoAngleDeg, (float) startDeg)) {
+                    startDeg = normalize360(startDeg + 180);
+                }
+            }
+            if (!endIsTangent) {
+                if (!Angle.similarFacing(reverseGeoAngle, (float) endDeg)) {
+                    endDeg = normalize360(endDeg + 180);
+                }
+            }
+
+            // 3. 両方が未バインドのStraightNodeの場合、0度と180度の自動揃え（直線化）を適用
+            if (bothUnboundStraightNodes) {
+                double angleDiff = getAngleDifference(startDeg, endDeg);
+                if (angleDiff > 175.0 && angleDiff < 185.0) {
+                    if (getAngleDifference(startDeg, geoAngleDeg) < getAngleDifference(endDeg, geoAngleDeg)) {
+                        endDeg = startDeg;
+                    } else {
+                        startDeg = endDeg;
+                    }
+                }
+            }
+
+            // 4. バインド済みノードの角度を更新（ベジェ曲線の適用トリガー）
+            if (beStart != null && !isStartBound) {
+                beStart.bind(startDeg);
+            }
+            if (beEnd != null && !isEndBound) {
+                beEnd.bind(endDeg);
+            }
+
+            Angle finalStartAngle = Angle.fromAngle((float) startDeg);
+            Angle finalEndAngle = Angle.fromAngle((float) endDeg);
+
+            // 5. MTR標準の接続処理を実行（ブロックステートの22.5°角度ではなく
+            //    上で決定した角度でレールを作成するため「方向が無効です」を防止）
+            onConnect(
+                    world, context.getStack(), startNode.transportMode,
+                    startState, endState, startBlockPos, endBlockPos,
+                    finalStartAngle, finalEndAngle, ServerPlayerEntity.cast(player)
+            );
+
+            // 6. バインド済みノードのベジェ曲線を更新
+            if (beStart != null && beStart.isBound()) beStart.updateConnectedRails(true);
+            if (beEnd != null && beEnd.isBound()) beEnd.updateConnectedRails(true);
+
+            tag.remove(TAG_TRANSPORT_MODE);
+            ci.cancel();
         } else {
-            // 相手がUnboundの場合、幾何学方向（直線）を基準とする
-            baseAngle = calculateStraightAngle(myPos, otherPos);
+            onRemove(world, startBlockPos, endBlockPos, ServerPlayerEntity.cast(player));
+            tag.remove(TAG_TRANSPORT_MODE);
+            ci.cancel();
         }
-
-        // 自分から見た相手の方向（幾何学方向）
-        double geoAngle = calculateStraightAngle(myPos, otherPos);
-
-        // 基準角度が、幾何学方向と逆向き（180度ズレ）の場合は補正
-        if (!Angle.similarFacing((float) baseAngle, (float) geoAngle)) {
-            baseAngle = normalize360(baseAngle + 180.0);
-        }
-
-        return baseAngle;
     }
 
     private static StraightNodeBlockEntity getStraightNodeBE(World world, BlockPos pos) {
@@ -101,16 +168,14 @@ public abstract class ItemNodeModifierBaseMixin {
         return null;
     }
 
-    private static double calculateStraightAngle(BlockPos pos1, BlockPos pos2) {
-        double dx = pos2.getX() - pos1.getX();
-        double dz = pos2.getZ() - pos1.getZ();
-        double deg = Math.toDegrees(Math.atan2(dz, dx));
-        return normalize360(deg);
-    }
-
     private static double normalize360(double angle) {
         angle = angle % 360.0;
         if (angle < 0.0) angle += 360.0;
         return angle;
+    }
+
+    private static double getAngleDifference(double a1, double a2) {
+        double diff = Math.abs(a1 - a2) % 360.0;
+        return diff > 180.0 ? 360.0 - diff : diff;
     }
 }
