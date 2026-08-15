@@ -120,4 +120,8 @@ public class LoaderImpl {
             return new Identifier(net.minecraft.registry.Registries.ITEM.getId(itm.data));
         #endif
     }
+
+    public static void sendBlockEntityUpdatePacket(World world, BlockPos pos) {
+
+    }
 }

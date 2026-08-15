@@ -1,21 +1,14 @@
 plugins {
     id "net.minecraftforge.gradle" version "6.0.36"
+    id "org.spongepowered.mixin" version "+"
 }
 
 minecraft {
-    mappings channel: "official", version: rootProject.findProperty("minecraft_version")
+    mappings channel: "official", version: rootProject.minecraft_version
     runs {
         configureEach {
             property "forge.logging.markers", "REGISTRIES"
             property "forge.logging.console.level", "debug"
-            property "ignoreList", "bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client-extra,fmlcore,javafmllanguage,lowcodelanguage,mclanguage,forge-"
-            jvmArg "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED"
-            jvmArg "--add-opens=java.base/java.lang=ALL-UNNAMED"
-            jvmArg "--add-opens=java.base/java.util=ALL-UNNAMED"
-            jvmArg "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
-            jvmArg "--add-opens=java.base/java.text=ALL-UNNAMED"
-            jvmArg "--add-opens=java.desktop/java.awt=ALL-UNNAMED"
-            jvmArg "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED"
         }
         client {}
         server { args "--nogui" }
@@ -31,8 +24,9 @@ jarJar.enable()
 sourceSets.main.resources { srcDir "src/generated/resources" }
 
 dependencies {
-    minecraft "net.minecraftforge:forge:${rootProject.findProperty("minecraft_version")}-${project.findProperty("forge_version_${rootProject.findProperty("minecraft_version")}")}"
-    implementation fg.deobf("maven.modrinth:minecraft-transit-railway:FORGE-${rootProject.findProperty("mtr_version")}+${rootProject.findProperty("minecraft_version")}")
+    minecraft "net.minecraftforge:forge:${rootProject.minecraft_version}-${project.properties["forge_version_$rootProject.minecraft_version"]}"
+    implementation fg.deobf("maven.modrinth:minecraft-transit-railway:FORGE-${rootProject.mtr_version}+${rootProject.minecraft_version}")
+    annotationProcessor "org.spongepowered:mixin:+:processor"
     annotationProcessor 'systems.manifold:manifold-preprocessor:+'
 
     if(project.merged_mc_version_int >= 11802) {
@@ -43,23 +37,11 @@ dependencies {
     }
 }
 
-// Copy mods.toml into classes dir so Forge finds both declaration and @Mod class in one mod file
-tasks.register('prepareModClasses') {
-    dependsOn processResources, compileJava
-    doLast {
-        copy {
-            from 'build/resources/main/META-INF/mods.toml'
-            into 'build/classes/java/main/META-INF'
-        }
-        // Remove from resources dir so Forge sees only one mod file entry
-        delete 'build/resources/main/META-INF/mods.toml'
-    }
-}
-tasks.named('classes') { dependsOn('prepareModClasses') }
-afterEvaluate {
-    tasks.matching { it.name in ['prepareRunClientCompile', 'prepareRunServerCompile'] }.configureEach {
-        dependsOn('prepareModClasses')
-    }
+mixin {
+    add sourceSets.main, "bte.refmap.json"
+    config "bte.mixins.json"
+    debug.verbose = true
+    debug.export = true
 }
 
 java {

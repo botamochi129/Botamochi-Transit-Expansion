@@ -125,6 +125,10 @@ public abstract class RailMathMixin implements IRailMathExtra {
     @Override
     public boolean bte$isBezierEnabled() { return bte$isBezierEnabled; }
     @Override
+    public BezierCurve bte$getCurve() {
+        return bte$getActiveCurve();
+    }
+    @Override
     public double bte$getStartRad() { return bte$startRad; }
     @Override
     public double bte$getEndRad() { return bte$endRad; }

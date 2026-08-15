@@ -12,7 +12,6 @@
     "mtr.RenderRailsMixin"
   ],
   "client": [
-    "minecraft.NativeImageAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

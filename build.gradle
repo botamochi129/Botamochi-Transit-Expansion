@@ -121,7 +121,7 @@ tasks.register("setupFiles") {
 	doLast {
 		for(var targetModloader : ["forge"]) {
 			delete fileTree("${targetModloader}/src/main/java/botamochi129/bte/mod")
-			delete fileTree("${targetModloader}/src/main/java/botamochi129/bte/mixin")
+			delete fileTree("${targetModloader}/src/main/java/botamochi129/bte/mixin/mtr")
 			delete fileTree("${targetModloader}/src/main/resources/assets")
 			delete fileTree("${targetModloader}/src/main/resources/data")
 
@@ -131,8 +131,8 @@ tasks.register("setupFiles") {
 			}
 
 			copy {
-				from "${sourceModloader}/src/main/java/botamochi129/bte/mixin"
-				into "${targetModloader}/src/main/java/botamochi129/bte/mixin"
+				from "${sourceModloader}/src/main/java/botamochi129/bte/mixin/mtr"
+				into "${targetModloader}/src/main/java/botamochi129/bte/mixin/mtr"
 			}
 
 			copy {

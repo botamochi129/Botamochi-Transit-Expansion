@@ -2,21 +2,19 @@
   "required": true,
   "minVersion": "0.8",
   "package": "botamochi129.bte.mixin",
-  "compatibilityLevel": "JAVA_16",
+  "compatibilityLevel": "JAVA_17",
   "mixins": [
+    "mtr.AngleMixin",
     "mtr.ItemNodeModifierBaseMixin",
     "mtr.ItemRailModifierMixin",
     "mtr.PathDataMixin",
     "mtr.RailMathMixin",
-    "mtr.RailMixin",
-    "mtr.RenderRailsMixin",
-    "mtr.RenderRailsNodeRotationMixin"
+    "mtr.RenderRailsNodeRotationMixin",
+    "mtr.RenderRailsMixin"
   ],
   "client": [
-    "minecraft.NativeImageAccessor"
   ],
   "injectors": {
     "defaultRequire": 1
-  },
-  "refmap": "bte.refmap.json"
+  }
 }

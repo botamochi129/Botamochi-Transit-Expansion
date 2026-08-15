@@ -1,8 +1,23 @@
 {
   "block.bte.straight_node": "Straight Node",
-  "block.bte.straight_node.desc": "Rail node with adjustable angle",
-  "gui.bte.angle_screen.title": "Angle Adjustment",
-  "gui.bte.angle_screen.current": "Current: %d°",
-  "gui.bte.angle_screen.done": "Done",
-  "item.bte.straight_node.angle_format": "%s (Angle: %.1f°)"
+  "block.bte.straight_node.desc": "Rail node with adjustable angle and offset",
+
+  "item.bte.straight_node.format": "%s (%s)",
+
+  "gui.bte.angle_screen.title": "Straight Node Configuration",
+  "gui.bte.angle_screen.hint_exact": "Exact: -180° to 180°, 0°=East",
+  "gui.bte.angle_screen.hint_simple": "Simple: 0° to 180°, Auto-select",
+  "gui.bte.angle_screen.status_connected": "Status: Connected",
+  "gui.bte.angle_screen.status_bound": "Status: Bound",
+  "gui.bte.angle_screen.status_unbound": "Status: Unbound",
+  "gui.bte.angle_screen.angle_value": "Angle: %.1f°",
+  "gui.bte.angle_screen.angle_unbound": "Angle: Unbound",
+  "gui.bte.angle_screen.rail_properties": "Rail Properties",
+  "gui.bte.angle_screen.no_connected_rails": "No connected rails",
+  "gui.bte.angle_screen.rail_info": "Rail %d/%d (to %d, %d, %d)",
+  "gui.bte.angle_screen.node_offset": "Node Offset (X, Y, Z)",
+  "gui.bte.angle_screen.unbind": "Unbind",
+  "gui.bte.angle_screen.exact_angle": "Exact Angle",
+  "gui.bte.angle_screen.checkbox_exact": "Exact Angle (-180° to 180°)",
+  "gui.bte.angle_screen.checkbox_simple": "Simple Angle (0° to 180°, Auto-select)"
 }

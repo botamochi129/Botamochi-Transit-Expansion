@@ -9,4 +9,6 @@ public interface IRailMathExtra {
     boolean bte$isBezierEnabled();
     double bte$getStartRad();
     double bte$getEndRad();
+
+    BezierCurve bte$getCurve();
 }

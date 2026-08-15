@@ -147,10 +147,9 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         if (!foundTarget) {
             org.mtr.mapping.holder.ClientPlayerEntity player = MinecraftClient.getInstance().getPlayerMapped();
             if (player != null && !connectedTargetPositions.isEmpty()) {
+                MinecraftClient mc = MinecraftClient.getInstance();
                 float yaw = 0;
-                if (client != null) {
-                    yaw = player.getYaw(client.getTickDelta());
-                }
+                yaw = player.getYaw(mc.getTickDelta());
                 double radYaw = Math.toRadians(yaw);
                 double lookX = -Math.sin(radYaw);
                 double lookZ = Math.cos(radYaw);
@@ -616,10 +615,6 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         else if (isBound) { status = Text.cast(TextHelper.translatable("gui.bte.angle_screen.status_bound")); statusColor = 0xFFFF55; }
         else { status = Text.cast(TextHelper.translatable("gui.bte.angle_screen.status_unbound")); statusColor = 0xFF5555; }
         graphicsHolder.drawCenteredText(status.getString(), cx, cy - 50, statusColor);
-
-        double displayAngle = isBound ? (isExactMode ? toExactUI(currentAngle) : toSimpleUI(currentAngle)) : 0.0;
-        Text angleText = Text.cast(isBound ? TextHelper.translatable("gui.bte.angle_screen.angle_value", displayAngle) : TextHelper.translatable("gui.bte.angle_screen.angle_unbound"));
-        graphicsHolder.drawCenteredText(angleText.getString(), cx, cy - 40, 0xFFFFFF);
 
         if (hasRails) {
             graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.rail_properties").getString(), cx - w / 2, cy - 22, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());

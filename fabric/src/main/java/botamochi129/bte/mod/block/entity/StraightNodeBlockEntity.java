@@ -200,6 +200,8 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         if (world != null && !world.isClient()) {
             ServerWorld sw = LoaderImpl.toServerWorld(world);
             if (sw != null) sw.getChunkManager().markForUpdate(getPos2());
+
+            LoaderImpl.sendBlockEntityUpdatePacket(world, getPos2());
         }
     }
 
