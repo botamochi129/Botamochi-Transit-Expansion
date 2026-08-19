@@ -13,36 +13,37 @@ public class PacketUpdateStraightNodeAngle extends PacketHandler {
 
     private final BlockPos blockPos;
     private final double angle;
-    // ★ 追加: オフセット値
     private final double offsetX;
     private final double offsetY;
     private final double offsetZ;
+    private final double rollDegrees; // ★ 追加
 
     public PacketUpdateStraightNodeAngle(PacketBufferReceiver receiver) {
         this.blockPos = BlockPos.fromLong(receiver.readLong());
         this.angle = receiver.readDouble();
-        // ★ 追加: オフセット値の読み込み
         this.offsetX = receiver.readDouble();
         this.offsetY = receiver.readDouble();
         this.offsetZ = receiver.readDouble();
+        this.rollDegrees = receiver.readDouble(); // ★ 追加
     }
 
-    public PacketUpdateStraightNodeAngle(BlockPos blockPos, double angle, double offsetX, double offsetY, double offsetZ) {
+    public PacketUpdateStraightNodeAngle(BlockPos blockPos, double angle, double offsetX, double offsetY, double offsetZ, double rollDegrees) {
         this.blockPos = blockPos;
         this.angle = angle;
         this.offsetX = offsetX;
         this.offsetY = offsetY;
         this.offsetZ = offsetZ;
+        this.rollDegrees = rollDegrees; // ★ 追加
     }
 
     @Override
     public void write(PacketBufferSender packetBufferSender) {
         packetBufferSender.writeLong(blockPos.asLong());
         packetBufferSender.writeDouble(angle);
-        // ★ 追加: オフセット値の書き込み
         packetBufferSender.writeDouble(offsetX);
         packetBufferSender.writeDouble(offsetY);
         packetBufferSender.writeDouble(offsetZ);
+        packetBufferSender.writeDouble(rollDegrees); // ★ 追加
     }
 
     @Override
@@ -76,19 +77,21 @@ public class PacketUpdateStraightNodeAngle extends PacketHandler {
             }
 
             // 2. オフセットの適用
-            // ※ StraightNodeBlockEntity に getOffsetX/Y/Z, setOffset メソッドが必要です
             if (Math.abs(be.getOffsetX() - offsetX) > 0.001 ||
                     Math.abs(be.getOffsetY() - offsetY) > 0.001 ||
                     Math.abs(be.getOffsetZ() - offsetZ) > 0.001) {
-
                 be.setOffset(offsetX, offsetY, offsetZ);
                 needsUpdate = true;
             }
 
-            // 3. 変更があればレールデータを更新
+            // 3. カント（ロール）の適用 ★ 追加
+            if (Math.abs(be.getRollDegrees() - rollDegrees) > 0.001) {
+                be.setRollDegrees(rollDegrees);
+                needsUpdate = true;
+            }
+
+            // 4. 変更があればレールデータを更新
             if (needsUpdate) {
-                // bind() 内で既に呼ばれている可能性もあるが、
-                // オフセット変更時にも確実にレールを再生成させるため明示的に呼び出す
                 be.updateConnectedRails(true);
                 be.markDirty2();
             }

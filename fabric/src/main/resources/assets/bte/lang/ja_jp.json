@@ -19,5 +19,8 @@
   "gui.bte.angle_screen.unbind": "固定を解除",
   "gui.bte.angle_screen.exact_angle": "詳細な角度指定",
   "gui.bte.angle_screen.checkbox_exact": "詳細な角度 (-180°〜180°)",
-  "gui.bte.angle_screen.checkbox_simple": "簡易な角度 (0°〜180°、自動選択)"
+  "gui.bte.angle_screen.checkbox_simple": "簡易な角度 (0°〜180°、自動選択)",
+  "gui.bte.angle_screen.node_cant": "カント / ロール",
+
+  "item.bte.rail_editor": "レールエディタ"
 }

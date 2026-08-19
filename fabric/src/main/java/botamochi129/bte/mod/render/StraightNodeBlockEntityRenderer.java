@@ -27,10 +27,12 @@ public class StraightNodeBlockEntityRenderer extends BlockEntityRenderer<Straigh
         final boolean bound = entity.isBound();
         final boolean connected = entity.isConnected();
 
-        // ★ 追加: オフセット値の取得
         final double offX = entity.getOffsetX();
         final double offY = entity.getOffsetY();
         final double offZ = entity.getOffsetZ();
+
+        // ★ 追加: カント角の取得
+        final double rollDeg = entity.getRollDegrees();
 
         float yawDegrees;
         if (bound) {
@@ -42,24 +44,23 @@ public class StraightNodeBlockEntityRenderer extends BlockEntityRenderer<Straigh
         }
 
         if (!connected) {
-            // ★ 修正: オフセット値を渡す
-            renderNode(pos, yawDegrees, light, offX, offY, offZ);
+            // ★ 修正: rollDeg を渡す
+            renderNode(pos, yawDegrees, (float) rollDeg, light, offX, offY, offZ);
         }
     }
 
-    private void renderNode(BlockPos pos, float yawDegrees, int light, double offX, double offY, double offZ) {
-        renderElement(pos, yawDegrees, light, CUBE_WOOD,  0, 0, 6,  16, 1, 10, offX, offY, offZ);
-        renderElement(pos, yawDegrees, light, CUBE_METAL, 1, 1, 7,   2,12,  9, offX, offY, offZ);
-        renderElement(pos, yawDegrees, light, CUBE_METAL,14, 1, 7,  15,12,  9, offX, offY, offZ);
-        renderElement(pos, yawDegrees, light, CUBE_METAL, 0,12, 7.5, 16,16,8.5, offX, offY, offZ);
+    private void renderNode(BlockPos pos, float yawDegrees, float rollDegrees, int light, double offX, double offY, double offZ) {
+        renderElement(pos, yawDegrees, rollDegrees, light, CUBE_WOOD,  0, 0, 6,  16, 1, 10, offX, offY, offZ);
+        renderElement(pos, yawDegrees, rollDegrees, light, CUBE_METAL, 1, 1, 7,   2,12,  9, offX, offY, offZ);
+        renderElement(pos, yawDegrees, rollDegrees, light, CUBE_METAL,14, 1, 7,  15,12,  9, offX, offY, offZ);
+        renderElement(pos, yawDegrees, rollDegrees, light, CUBE_METAL, 0,12, 7.5, 16,16,8.5, offX, offY, offZ);
     }
 
-    private void renderElement(BlockPos pos, float yawDegrees, int light, ModelSmallCube cube,
+    private void renderElement(BlockPos pos, float yawDegrees, float rollDegrees, int light, ModelSmallCube cube,
                                double minX, double minY, double minZ,
                                double maxX, double maxY, double maxZ,
-                               double offX, double offY, double offZ) { // ★ 引数追加
+                               double offX, double offY, double offZ) {
 
-        // ★ 修正: オフセットを加算して描画基準点をずらす
         StoredMatrixTransformations transforms = new StoredMatrixTransformations(
                 pos.getX() + 0.5D + offX, pos.getY() + 0.5D + offY, pos.getZ() + 0.5D + offZ
         );
@@ -74,6 +75,10 @@ public class StraightNodeBlockEntityRenderer extends BlockEntityRenderer<Straigh
 
         transforms.add(g -> {
             g.rotateYDegrees(yawDegrees);
+            // ★ 追加: カント（ロール）の適用
+            // StraightNodeBlock のモデルはX軸方向に長いため、X軸回転でバンクを表現します
+            g.rotateZDegrees(rollDegrees);
+
             g.translate(offsetX, offsetY, offsetZ);
             g.scale(scaleX, scaleY, scaleZ);
             g.translate(-0.5D, -0.5D, -0.5D);

@@ -48,9 +48,13 @@ public abstract class ItemRailModifierMixin {
         Double fixedStart = null;
         Double fixedEnd = null;
 
+        // ★ 追加: カント用変数
+        double roll1 = 0, roll2 = 0;
+
         BlockEntity be1 = world.getBlockEntity(p1);
         if (be1 != null && be1.data instanceof StraightNodeBlockEntity sn1) {
             offX1 = sn1.getOffsetX(); offY1 = sn1.getOffsetY(); offZ1 = sn1.getOffsetZ();
+            roll1 = Math.toRadians(sn1.getRollDegrees()); // ★ カント取得
             if (sn1.isBound()) fixedStart = sn1.getAngleDegrees();
         } else if (be1 == null) {
             fixedStart = (double) BlockNode.getAngle(stateStart);
@@ -59,6 +63,7 @@ public abstract class ItemRailModifierMixin {
         BlockEntity be2 = world.getBlockEntity(p2);
         if (be2 != null && be2.data instanceof StraightNodeBlockEntity sn2) {
             offX2 = sn2.getOffsetX(); offY2 = sn2.getOffsetY(); offZ2 = sn2.getOffsetZ();
+            roll2 = Math.toRadians(sn2.getRollDegrees()); // ★ カント取得
             if (sn2.isBound()) fixedEnd = sn2.getAngleDegrees();
         } else if (be2 == null) {
             fixedEnd = (double) BlockNode.getAngle(stateEnd);
@@ -67,7 +72,6 @@ public abstract class ItemRailModifierMixin {
         double geo = NodeGeometry.straightAngle(p1, p2);
         double reverseGeo = NodeGeometry.straightAngle(p2, p1);
 
-        // ★ 修正: すべてのノード（標準ノード含む）に対して chooseBestExit を適用
         double nodeStartDeg;
         if (fixedStart != null) {
             nodeStartDeg = NodeGeometry.chooseBestExit(fixedStart, geo);
@@ -97,6 +101,8 @@ public abstract class ItemRailModifierMixin {
                     startVec, Math.toRadians(nodeStartDeg), endVec, Math.toRadians(nodeEndDeg),
                     verticalRadius, rail.railMath.getShape()
             );
+            // ★ 追加: プレビューにもカントを適用
+            mathExtra.bte$setRoll(roll1, roll2);
         }
     }
 }

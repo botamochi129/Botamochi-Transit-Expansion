@@ -72,6 +72,13 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private TextFieldWidgetExtension textFieldX, textFieldY, textFieldZ;
     private ButtonWidgetExtension btnModeX, btnModeY, btnModeZ;
 
+    // ★ 追加: カント（ロール）用変数
+    private double currentRoll = 0.0;
+    private boolean sliderModeRoll = true;
+    private SliderWidgetExtension sliderRoll;
+    private TextFieldWidgetExtension textFieldRoll;
+    private ButtonWidgetExtension btnModeRoll;
+
     private static final double SIMPLE_MAX_ANGLE = 180.0;
     private static final double SIMPLE_MIN_ANGLE = 0.0;
     private static final double EXACT_MAX_ANGLE = 180.0;
@@ -80,7 +87,6 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private boolean isExactMode = false;
 
     public StraightNodeAngleScreen(BlockPos blockPos, World world, BlockPos targetPos) {
-        // ★ 修正: タイトルを言語キーから取得
         super(TextHelper.translatable("gui.bte.angle_screen.title").getString());
         this.blockPos = blockPos;
         this.world = world;
@@ -95,6 +101,8 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             this.offsetX = be.getOffsetX();
             this.offsetY = be.getOffsetY();
             this.offsetZ = be.getOffsetZ();
+
+            this.currentRoll = be.getRollDegrees(); // ★ 追加
         } else {
             this.isBound = false;
             this.currentAngle = UNBOUND_SENTINEL;
@@ -279,17 +287,19 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         setupOffsetUI(cx, w, mainW, offY + rowH + 2, rowH, 1);
         setupOffsetUI(cx, w, mainW, offY + (rowH + 2) * 2, rowH, 2);
 
-        int bottomY = offY + (rowH + 2) * 3 + 6;
+        // ★ 追加: カント（ロール）UIのセットアップ
+        setupRollUI(cx, w, mainW, offY + (rowH + 2) * 3, rowH);
+
+        // ★ 修正: ボトムボタンのY座標を1行分下にずらす
+        int bottomY = offY + (rowH + 2) * 4 + 6;
 
         btnReturn = new ButtonWidgetExtension(cx - w / 2, bottomY, 20, rowH, "X", btn -> onClose2());
         addChild(new ClickableWidget(btnReturn));
 
-        // ★ 修正: Unbind ボタンのラベルを言語キー化
         btnUnbind = new ButtonWidgetExtension(cx - w / 2 + 24, bottomY, 60, rowH, TextHelper.translatable("gui.bte.angle_screen.unbind"), btn -> unbind());
         btnUnbind.setActiveMapped(isBound);
         addChild(new ClickableWidget(btnUnbind));
 
-        // ★ 修正: チェックボックスのラベルを言語キー化
         chkExactMode = new CheckboxWidgetExtension(cx - w / 2 + 90, bottomY, 200, rowH, TextHelper.translatable("gui.bte.angle_screen.exact_angle").getString(), isExactMode, isChecked -> {
             isExactMode = isChecked; updateModeUI();
         });
@@ -299,7 +309,61 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         updateModeUI();
         updateRailProperties(currentRadius, false);
         updateOffsetUI();
+        updateRollUI(); // ★ 追加
         updateRailSelectionUI();
+    }
+
+    // ★ 追加: カント（ロール）UIのセットアップメソッド
+    private void setupRollUI(int cx, int w, int mainW, int y, int rowH) {
+        SliderWidgetExtension s = new SliderWidgetExtension(cx - w / 2, y, mainW, rowH, "") {
+            @Override
+            public void applyValue2() {
+                double val = this.getValueMapped() * 180.0 - 90.0; // 0.0〜1.0 -> -90.0〜90.0
+                val = Math.round(val * 10.0) / 10.0; // 0.1度単位
+                if (Math.abs(val - currentRoll) > 0.0001) updateRoll(val);
+            }
+            @Override
+            protected void updateMessage2() {}
+        };
+
+        TextFieldWidgetExtension t = new TextFieldWidgetExtension(cx - w / 2, y, mainW, rowH, 10, TextCase.DEFAULT, "[^\\d\\.\\-]", "0");
+        t.setChangedListener2(text -> {
+            try {
+                double val = Double.parseDouble(text);
+                val = Math.max(-90.0, Math.min(90.0, val));
+                if (Math.abs(val - currentRoll) > 0.0001) updateRoll(val);
+            } catch (Exception ignored) {}
+        });
+
+        ButtonWidgetExtension b = new ButtonWidgetExtension(cx + w / 2 - 22, y, 20, rowH, "⇄", btn -> {
+            sliderModeRoll = !sliderModeRoll;
+            updateRollUI();
+        });
+
+        addChild(new ClickableWidget(s));
+        addChild(new ClickableWidget(t));
+        addChild(new ClickableWidget(b));
+
+        sliderRoll = s;
+        textFieldRoll = t;
+        btnModeRoll = b;
+    }
+
+    private void updateRoll(double val) {
+        currentRoll = val;
+        updateRollUI();
+        apply();
+    }
+
+    private void updateRollUI() {
+        if (sliderRoll == null) return;
+        sliderRoll.setVisibleMapped(sliderModeRoll);
+        textFieldRoll.setVisible2(!sliderModeRoll);
+        btnModeRoll.setMessage2(Text.of(sliderModeRoll ? "⇄" : "📝"));
+        sliderRoll.setValueMapped((currentRoll + 90.0) / 180.0);
+        sliderRoll.setMessage2(Text.of(String.format("Cant: %.1f°", currentRoll)));
+        String newText = String.format("%.1f", currentRoll);
+        if (!newText.equals(textFieldRoll.getText2())) textFieldRoll.setText2(newText);
     }
 
     private void selectRail(int index) {
@@ -461,7 +525,6 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         slider.setVisibleMapped(sliderMode);
         textField.setVisible2(!sliderMode);
         btnMode.setMessage2(Text.of(sliderMode ? "⇄" : "📝"));
-        // ★ 修正: チェックボックスの横のテキストも言語キー化
         chkExactMode.setMessage2(Text.cast(TextHelper.translatable(isExactMode ? "gui.bte.angle_screen.checkbox_exact" : "gui.bte.angle_screen.checkbox_simple")));
     }
 
@@ -520,7 +583,8 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         textField.setText2(TextHelper.translatable("gui.bte.angle_screen.angle_unbound").getString());
         slider.setMessage2(Text.of("0.0°"));
         slider.setValueMapped(0.0);
-        BTERegistryClient.sendPacketToServer(new PacketUpdateStraightNodeAngle(blockPos, UNBOUND_SENTINEL, offsetX, offsetY, offsetZ));
+        // ★ 修正: rollDegrees を追加
+        BTERegistryClient.sendPacketToServer(new PacketUpdateStraightNodeAngle(blockPos, UNBOUND_SENTINEL, offsetX, offsetY, offsetZ, currentRoll));
     }
 
     private void updateUIState() {
@@ -599,10 +663,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         int cx = getWidthMapped() / 2;
         int cy = getHeightMapped() / 2;
         int w = Math.min(getWidthMapped() - 40, 360);
-
-        // ★ 修正: String.valueOf() ではなく .getString() を使用して翻訳済み文字列を取得する
-        // String.valueOf(Text) は Text.toString() を呼び出してしまい、
-        // 翻訳済み文字列ではなく「言語キーそのもの」や「オブジェクトのハッシュ値」が表示される原因になります。
+        int rowH = 18; // ★ render内でも使えるようにローカル変数化
 
         graphicsHolder.drawCenteredText(TextHelper.translatable("gui.bte.angle_screen.title").getString(), cx, cy - 70, 0xFFFFFF);
 
@@ -627,10 +688,15 @@ public class StraightNodeAngleScreen extends ScreenExtension {
 
         int offLabelY = hasRails ? (cy + 54) : (cy - 18 + 4);
         graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.node_offset").getString(), cx - w / 2, offLabelY - 4, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
+
+        // ★ 追加: カント（ロール）のラベル描画
+        int rollLabelY = offLabelY + (rowH + 2) * 3;
+        graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.node_cant", "Cant / Roll").getString(), cx - w / 2, rollLabelY - 4, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
     }
 
     private void apply() {
-        BTERegistryClient.sendPacketToServer(new PacketUpdateStraightNodeAngle(blockPos, currentAngle, offsetX, offsetY, offsetZ));
+        // ★ 修正: rollDegrees を追加
+        BTERegistryClient.sendPacketToServer(new PacketUpdateStraightNodeAngle(blockPos, currentAngle, offsetX, offsetY, offsetZ, currentRoll));
     }
 
     @Override

@@ -28,6 +28,7 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
     private static final String KEY_OFFSET_X = "offset_x";
     private static final String KEY_OFFSET_Y = "offset_y";
     private static final String KEY_OFFSET_Z = "offset_z";
+    private static final String KEY_ROLL = "roll_degrees"; // ★ 追加
 
     public static final double UNBOUND_SENTINEL = -129129.0;
 
@@ -40,6 +41,9 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
     private double offsetX = 0.0;
     private double offsetY = 0.0;
     private double offsetZ = 0.0;
+
+    // ★ 追加: カント角 (ロール)
+    private double rollDegrees = 0.0;
 
     public StraightNodeBlockEntity(BlockPos pos, BlockState state) {
         super(Blocks.STRAIGHT_NODE_BE.get(), pos, state);
@@ -70,16 +74,21 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         return angleDegrees != UNBOUND_SENTINEL;
     }
 
-    public double getOffsetX() {
-        return offsetX;
+    public double getOffsetX() { return offsetX; }
+    public double getOffsetY() { return offsetY; }
+    public double getOffsetZ() { return offsetZ; }
+
+    // ★ 追加: カント角の Getter/Setter
+    public double getRollDegrees() {
+        return rollDegrees;
     }
 
-    public double getOffsetY() {
-        return offsetY;
-    }
-
-    public double getOffsetZ() {
-        return offsetZ;
+    public void setRollDegrees(double degrees) {
+        // カントは現実的にも -90° 〜 +90° の範囲に制限
+        this.rollDegrees = Math.max(-90.0, Math.min(90.0, degrees));
+        markDirty2();
+        syncBlockEntity();
+        updateBezierDataOnly(); // ベジェデータの再計算を促す
     }
 
     public void setOffset(double x, double y, double z) {
@@ -117,6 +126,9 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         Position nodePos = Init.blockPosToPosition(getPos2());
         double selfAxis = this.angleDegrees; // 0~180 の軸
 
+        // ★ 追加: 自分のロール角
+        double selfRollRad = Math.toRadians(this.rollDegrees);
+
         Map<Position, Rail> railsAtPos = data.positionsToRail.get(nodePos);
         if (railsAtPos == null) return;
 
@@ -134,22 +146,23 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             String railMathKey = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
 
             BlockPos otherBlockPos = Init.positionToBlockPos(otherPos);
-            double otherAxis = BlockNode.getAngle(world.getBlockState(otherBlockPos)); // MTR標準ノードも軸として扱う
+            double otherAxis = BlockNode.getAngle(world.getBlockState(otherBlockPos));
             double otherOffX = 0, otherOffY = 0, otherOffZ = 0;
+            double otherRollRad = 0.0; // ★ 追加: 相手のロール角
 
             BlockEntity rawBe = world.getBlockEntity(otherBlockPos);
             if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity snbe && snbe.isBound()) {
-                otherAxis = snbe.getAngleDegrees(); // 0~180 の軸
+                otherAxis = snbe.getAngleDegrees();
                 otherOffX = snbe.getOffsetX();
                 otherOffY = snbe.getOffsetY();
                 otherOffZ = snbe.getOffsetZ();
+                otherRollRad = Math.toRadians(snbe.getRollDegrees()); // ★ 追加
             }
 
             float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
                     otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX()));
             float reverseGeoAngleDeg = geoAngleDeg + 180.0f;
 
-            // ★ 動的に最適な出口を選択 (軸から +0° か +180° かを決める)
             double selfExit = NodeGeometry.chooseBestExit(selfAxis, geoAngleDeg);
             double otherExit = NodeGeometry.chooseBestExit(otherAxis, reverseGeoAngleDeg);
 
@@ -169,13 +182,15 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
                 mathExtra.bte$enableBezier(startVec, startRad, endVec, endRad, verticalRadius, shape);
             }
 
+            // ★ 修正: 配列サイズを 14 -> 16 に拡張 (末尾に startRoll, endRoll を追加)
             double[] dataToSave = new double[]{
                     startVec.x(), startVec.y(), startVec.z(),
                     endVec.x(), endVec.y(), endVec.z(),
                     startRad, endRad,
                     verticalRadius, shape.ordinal(),
                     nodePos.getX(), nodePos.getZ(),
-                    otherPos.getX(), otherPos.getZ()
+                    otherPos.getX(), otherPos.getZ(),
+                    selfRollRad, otherRollRad // ★ 追加
             };
             RAIL_MATH_DATA_MAP.put(railMathKey, dataToSave);
         }
@@ -231,6 +246,13 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             offsetX = offsetY = offsetZ = 0.0;
         }
 
+        // ★ 追加
+        if (tag.contains(KEY_ROLL)) {
+            rollDegrees = tag.getDouble(KEY_ROLL);
+        } else {
+            rollDegrees = 0.0;
+        }
+
         this.needsInitialUpdate = true;
     }
 
@@ -238,7 +260,6 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
     public void writeCompoundTag(CompoundTag tag) {
         super.writeCompoundTag(tag);
         if (isBound()) {
-            // ★ 修正: % 180.0 に戻し、「軸」として保存する
             double normalizedAngle = angleDegrees % 180.0;
             if (normalizedAngle < 0.0) normalizedAngle += 180.0;
             tag.putDouble(KEY_ANGLE, normalizedAngle);
@@ -248,6 +269,11 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             tag.putDouble(KEY_OFFSET_X, offsetX);
             tag.putDouble(KEY_OFFSET_Y, offsetY);
             tag.putDouble(KEY_OFFSET_Z, offsetZ);
+        }
+
+        // ★ 追加
+        if (rollDegrees != 0.0) {
+            tag.putDouble(KEY_ROLL, rollDegrees);
         }
     }
 }

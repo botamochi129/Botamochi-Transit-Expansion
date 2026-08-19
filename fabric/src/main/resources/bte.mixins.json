@@ -8,10 +8,14 @@
     "mtr.ItemRailModifierMixin",
     "mtr.PathDataMixin",
     "mtr.RailMathMixin",
+    "mtr.RenderRailsMixin",
     "mtr.RenderRailsNodeRotationMixin",
-    "mtr.RenderRailsMixin"
+    "mtr.RenderVehiclesMixin",
+    "mtr.StoredMatrixTransformationsMixin"
   ],
   "client": [
+    "mtr.CameraMixin",
+    "mtr.MainRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

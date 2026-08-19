@@ -91,10 +91,6 @@ public class LoaderImpl {
         return FabricLoader.getInstance().getConfigDir();
     }
 
-    public static BlockSettings createDefaultBlockSettings() {
-        return new BlockSettings(net.minecraft.block.AbstractBlock.Settings.create());
-    }
-
     public static BlockSettings getSolidBlockSettings(BlockSettings settings) {
         #if MC_VERSION >= "12001"
             return new BlockSettings(settings.data.solid());

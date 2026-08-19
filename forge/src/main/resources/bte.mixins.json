@@ -10,7 +10,8 @@
     "mtr.PathDataMixin",
     "mtr.RailMathMixin",
     "mtr.RenderRailsNodeRotationMixin",
-    "mtr.RenderRailsMixin"
+    "mtr.RenderRailsMixin",
+    "mtr.RenderVehiclesMixin"
   ],
   "client": [
   ],

@@ -39,12 +39,10 @@ public abstract class RenderRailsNodeRotationMixin {
 
                 if (be != null && be.data instanceof StraightNodeBlockEntity nodeBe && nodeBe.isBound()) {
 
-                    // ★ 追加: オフセット値の取得
                     double offX = nodeBe.getOffsetX();
                     double offY = nodeBe.getOffsetY();
                     double offZ = nodeBe.getOffsetZ();
 
-                    // ★ 修正: オフセット値を基準座標に加算する
                     final StoredMatrixTransformations storedMatrixTransformations = new StoredMatrixTransformations(
                             blockPos.getX() + 0.5 + offX,
                             blockPos.getY() + offY,
@@ -53,8 +51,12 @@ public abstract class RenderRailsNodeRotationMixin {
 
                     storedMatrixTransformations.add(graphicsHolder -> {
                         float renderAngle = -(float) nodeBe.getAngleDegrees() - 90.0F;
+                        float rollAngle = (float) nodeBe.getRollDegrees(); // ★ 追加
 
                         graphicsHolder.rotateYDegrees(renderAngle);
+                        // ★ 修正: Z軸回転（ロール/カント）を適用
+                        graphicsHolder.rotateZDegrees(rollAngle);
+
                         graphicsHolder.scale(4, 0.5F, 0.5F);
                         graphicsHolder.translate(-0.5, 0, -0.5);
                     });
