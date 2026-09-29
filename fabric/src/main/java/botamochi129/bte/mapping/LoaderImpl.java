@@ -22,6 +22,7 @@ public class LoaderImpl {
     private static Field simulatorsField;
     private static Field worldIdListField;
     private static boolean reflectionFailed = false;
+    private static boolean resolveWarned = false;
 
     static {
         try {
@@ -44,6 +45,12 @@ public class LoaderImpl {
     /**
      * Returns the Data (Simulator) for the given world via reflection.
      * Accesses Init.main -> Main.simulators -> finds by WORLD_ID_LIST index.
+     *
+     * <p>{@code null} は「今はまだ解決できない」を意味し、呼び出し側で再試行する。
+     * 一度失敗しただけで JVM 生涯分の失敗扱いにしないこと。MTR の
+     * {@code simulators} と {@code WORLD_ID_LIST} は起動途中で一時的に
+     * ずれうるため、その瞬間だけ失敗して以降ずっと無効化されると
+     * BTE の角度 publish だけが永久に黙って止まってしまう。
      */
     @SuppressWarnings("unchecked")
     public static Data getDataForWorld(World world) {
@@ -68,10 +75,23 @@ public class LoaderImpl {
             int index = ((List<?>) worldIdListObj).indexOf(worldId);
             if (index < 0) return null;
 
-            Object simulator = ((List<?>) simulatorsObj).get(index);
+            List<?> simulators = (List<?>) simulatorsObj;
+            if (index >= simulators.size()) return null;
+
+            Object simulator = simulators.get(index);
+            if (simulator == null) return null;
+
+            if (resolveWarned) {
+                resolveWarned = false;
+                System.out.println("[BTE][Data] MTR data resolution recovered for " + worldId);
+            }
             return (Data) simulator;
         } catch (Exception e) {
-            reflectionFailed = true;
+            if (!resolveWarned) {
+                resolveWarned = true;
+                System.out.println("[BTE][Data] transient failure resolving MTR data (will retry): "
+                        + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
             return null;
         }
     }

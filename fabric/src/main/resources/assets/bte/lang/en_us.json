@@ -19,5 +19,13 @@
   "gui.bte.angle_screen.unbind": "Unbind",
   "gui.bte.angle_screen.exact_angle": "Exact Angle",
   "gui.bte.angle_screen.checkbox_exact": "Exact Angle (-180° to 180°)",
-  "gui.bte.angle_screen.checkbox_simple": "Simple Angle (0° to 180°, Auto-select)"
+  "gui.bte.angle_screen.checkbox_simple": "Simple Angle (0° to 180°, Auto-select)",
+  "gui.bte.angle_screen.speed_limit": "Speed Limit (km/h)",
+  "gui.bte.angle_screen.speed_default": "Default",
+  "gui.bte.angle_screen.speed_hint": "Empty = follow the MTR default",
+  "gui.bte.angle_screen.cant": "Cant (deg)",
+  "gui.bte.angle_screen.cant_start": "Start",
+  "gui.bte.angle_screen.cant_middle": "Middle",
+  "gui.bte.angle_screen.cant_end": "End",
+  "gui.bte.angle_screen.cant_clear": "Clear"
 }

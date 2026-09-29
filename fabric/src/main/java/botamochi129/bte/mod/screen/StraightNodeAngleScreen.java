@@ -2,11 +2,17 @@ package botamochi129.bte.mod.screen;
 
 import botamochi129.bte.mapping.LoaderImpl;
 import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
+import botamochi129.bte.mod.data.RailAccessor;
+import botamochi129.bte.mod.packet.PacketRememberRailSpeedLimit;
+import botamochi129.bte.mod.packet.PacketSetCant;
 import botamochi129.bte.mod.packet.PacketUpdateStraightNodeAngle;
+import botamochi129.bte.mod.rail.CantProfile;
+import botamochi129.bte.mod.rail.RailBuilder;
 import botamochi129.bte.mod.registry.BTERegistryClient;
 import org.mtr.core.data.Data;
 import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
+import org.mtr.core.data.TwoPositionsBase;
 import org.mtr.core.operation.UpdateDataRequest;
 import org.mtr.core.tool.Utilities;
 import org.mtr.libraries.it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -31,6 +37,25 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private static final int SQUARE_SIZE = 18;
     private static final int TEXT_PADDING = 2;
     private static final int TEXT_FIELD_PADDING = 2;
+
+    /** 「MTR の既定値に従う」を表す内部値。GUI 上は空欄で表現する。 */
+    private static final long SPEED_UNSET = -1L;
+    private static final long SPEED_MAX = 10_000L;
+
+    /** ウィジェット1行の高さ。 */
+    private static final int ROW_H = 18;
+
+    /**
+     * 制限速度入力行の {@code init2()} 内での縦位置 (基準 cy からの相対値)。
+     * レイアウト: railY = cy + 4 / radiusY = railY + ROW_H + 4 / speedY = radiusY + ROW_H + 4。
+     */
+    private static final int SPEED_ROW_OFFSET_Y = 4 + (ROW_H + 4) * 2;
+
+    /** 制限速度行の次に並ぶカント行の {@code init2()} 内での縦位置 (基準 cy からの相対値)。 */
+    private static final int CANT_ROW_OFFSET_Y = SPEED_ROW_OFFSET_Y + ROW_H + 4;
+
+    /** ノードオフセット見出しの縦位置。カント行の追加に合わせて下げる。 */
+    private static final int OFFSET_LABEL_OFFSET_Y = 72;
 
     private final BlockPos blockPos;
     private final World world;
@@ -65,6 +90,19 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private TextFieldWidgetExtension textFieldRadius;
     private ButtonWidgetExtension btnMinus10, btnMinus1, btnMinus01;
     private ButtonWidgetExtension btnPlus01, btnPlus1, btnPlus10;
+
+    private TextFieldWidgetExtension textFieldSpeed;
+    private ButtonWidgetExtension btnSpeedMinus10, btnSpeedMinus1, btnSpeedPlus1, btnSpeedPlus10;
+    private ButtonWidgetExtension btnSpeedDefault;
+
+    /** 選択中レールの制限速度 (km/h)。-1 は「MTR 既定値」。 */
+    private long speedLimitKmh = SPEED_UNSET;
+
+    private TextFieldWidgetExtension textFieldCantStart, textFieldCantMiddle, textFieldCantEnd;
+    private ButtonWidgetExtension btnCantClear;
+
+    /** 選択中レールのカント（度）。このノードから見た向きの値。 */
+    private float cantStartDeg = 0.0F, cantMiddleDeg = 0.0F, cantEndDeg = 0.0F;
 
     private double offsetX = 0.0, offsetY = 0.0, offsetZ = 0.0;
     private boolean sliderModeX = true, sliderModeY = true, sliderModeZ = true;
@@ -108,7 +146,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         int cx = getWidthMapped() / 2;
         int cy = getHeightMapped() / 2;
         int w = Math.min(getWidthMapped() - 40, 360);
-        int rowH = 18;
+        int rowH = ROW_H;
 
         connectedRails.clear();
         connectedTargetPositions.clear();
@@ -273,7 +311,61 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             } catch (Exception ignored) {}
         });
 
-        int offY = hasRails ? radiusY + rowH + 10 : railSelectY;
+        final int speedY = radiusY + rowH + 4;
+        final int speedBtnW = 24;
+        final int speedDefaultW = 46;
+        final int speedFieldW = w - speedBtnW * 4 - speedDefaultW - 8;
+
+        textFieldSpeed = new TextFieldWidgetExtension(cx - w / 2, speedY, speedFieldW, rowH, 6,
+                TextCase.DEFAULT, "[^\\d\\-]", "");
+        addChild(new ClickableWidget(textFieldSpeed));
+
+        btnSpeedMinus10 = new ButtonWidgetExtension(cx - w / 2 + speedFieldW + 2, speedY, speedBtnW, rowH,
+                TextHelper.literal("-10"), btn -> stepSpeedLimit(-10));
+        btnSpeedMinus1 = new ButtonWidgetExtension(cx - w / 2 + speedFieldW + 2 + speedBtnW, speedY, speedBtnW, rowH,
+                TextHelper.literal("-1"), btn -> stepSpeedLimit(-1));
+        btnSpeedPlus1 = new ButtonWidgetExtension(cx - w / 2 + speedFieldW + 2 + speedBtnW * 2, speedY, speedBtnW, rowH,
+                TextHelper.literal("+1"), btn -> stepSpeedLimit(1));
+        btnSpeedPlus10 = new ButtonWidgetExtension(cx - w / 2 + speedFieldW + 2 + speedBtnW * 3, speedY, speedBtnW, rowH,
+                TextHelper.literal("+10"), btn -> stepSpeedLimit(10));
+
+        btnSpeedDefault = new ButtonWidgetExtension(cx + w / 2 - speedDefaultW, speedY, speedDefaultW, rowH,
+                TextHelper.translatable("gui.bte.angle_screen.speed_default"), btn -> resetSpeedLimit());
+
+        addChild(new ClickableWidget(btnSpeedMinus10));
+        addChild(new ClickableWidget(btnSpeedMinus1));
+        addChild(new ClickableWidget(btnSpeedPlus1));
+        addChild(new ClickableWidget(btnSpeedPlus10));
+        addChild(new ClickableWidget(btnSpeedDefault));
+
+        textFieldSpeed.setChangedListener2(this::onSpeedTextChanged);
+        // ウィジェット生成前に読み込んだ現在値をここで初めて反映する
+        updateSpeedLimitUI();
+
+        final int cantY = speedY + rowH + 4;
+        final int cantClearW = 46;
+        final int cantFieldW = Math.max(24, (w - cantClearW - 4) / 3);
+
+        textFieldCantStart = new TextFieldWidgetExtension(cx - w / 2, cantY, cantFieldW, rowH, 6,
+                TextCase.DEFAULT, "[^\\d\\-]", "");
+        textFieldCantMiddle = new TextFieldWidgetExtension(cx - w / 2 + cantFieldW + 2, cantY, cantFieldW, rowH, 6,
+                TextCase.DEFAULT, "[^\\d\\-]", "");
+        textFieldCantEnd = new TextFieldWidgetExtension(cx - w / 2 + (cantFieldW + 2) * 2, cantY, cantFieldW, rowH, 6,
+                TextCase.DEFAULT, "[^\\d\\-]", "");
+        btnCantClear = new ButtonWidgetExtension(cx + w / 2 - cantClearW, cantY, cantClearW, rowH,
+                TextHelper.translatable("gui.bte.angle_screen.cant_clear"), btn -> resetCant());
+
+        addChild(new ClickableWidget(textFieldCantStart));
+        addChild(new ClickableWidget(textFieldCantMiddle));
+        addChild(new ClickableWidget(textFieldCantEnd));
+        addChild(new ClickableWidget(btnCantClear));
+
+        textFieldCantStart.setChangedListener2(text -> onCantChanged());
+        textFieldCantMiddle.setChangedListener2(text -> onCantChanged());
+        textFieldCantEnd.setChangedListener2(text -> onCantChanged());
+        updateCantUI();
+
+        int offY = hasRails ? cantY + rowH + 10 : railSelectY;
         int mainW = w - 24;
 
         setupOffsetUI(cx, w, mainW, offY, rowH, 0);
@@ -407,11 +499,237 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             currentShape = selectedRail.railMath.getShape();
             currentRadius = selectedRail.railMath.getVerticalRadius();
             maxRadius = selectedRail.railMath.getMaxVerticalRadius();
+            final long[] limits = RailBuilder.getSpeedLimitKmh(selectedRail);
+            // 端点ごとに異なる値は本 GUI では表現しないため、端点1の値を表示する
+            speedLimitKmh = limits[0] < 0 ? SPEED_UNSET : limits[0];
+            loadCantFromBE(selectedRail);
         } else {
             currentShape = Rail.Shape.QUADRATIC;
             currentRadius = 0.0;
             maxRadius = 100.0;
+            speedLimitKmh = SPEED_UNSET;
+            cantStartDeg = cantMiddleDeg = cantEndDeg = 0.0F;
         }
+        updateSpeedLimitUI();
+        updateCantUI();
+    }
+
+    /**
+     * 保存済みカントを GUI へ反映する。保存は正規方向なので、
+     * このノードが正規始点でない場合は反転して見せる。
+     */
+    private void loadCantFromBE(Rail rail) {
+        cantStartDeg = cantMiddleDeg = cantEndDeg = 0.0F;
+        final StraightNodeBlockEntity be = getBE();
+        if (be == null) return;
+
+        final CantProfile stored = be.getCant(rail.getHexId());
+        if (stored == null) return;
+
+        final CantProfile view = isCanonicalStartFor(rail) ? stored : stored.reversed();
+        cantStartDeg = view.startDeg;
+        cantMiddleDeg = view.middleDeg;
+        cantEndDeg = view.endDeg;
+    }
+
+    /** 制限速度の入力欄・ボタンの表示を現在の {@link #speedLimitKmh} に合わせる。 */
+    private void updateSpeedLimitUI() {
+        if (textFieldSpeed == null) return;
+        final String text = speedLimitKmh < 0 ? "" : String.valueOf(speedLimitKmh);
+        if (!text.equals(textFieldSpeed.getText2())) {
+            textFieldSpeed.setText2(text);
+        }
+        final boolean hasRails = !connectedRails.isEmpty();
+        btnSpeedDefault.setActiveMapped(hasRails && speedLimitKmh >= 0);
+        btnSpeedMinus10.setActiveMapped(hasRails && canStepSpeed(-10));
+        btnSpeedMinus1.setActiveMapped(hasRails && canStepSpeed(-1));
+        btnSpeedPlus1.setActiveMapped(hasRails && canStepSpeed(1));
+        btnSpeedPlus10.setActiveMapped(hasRails && canStepSpeed(10));
+    }
+
+    /** 現在値から delta だけ動かした値が 0〜10000 km/h の範囲に収まるか。 */
+    private boolean canStepSpeed(long delta) {
+        final long base = speedLimitKmh < 0 ? 0L : speedLimitKmh;
+        final long next = base + delta;
+        return next >= 0L && next <= SPEED_MAX;
+    }
+
+    private void stepSpeedLimit(long delta) {
+        if (connectedRails.isEmpty()) return;
+        final long base = speedLimitKmh < 0 ? 0L : speedLimitKmh;
+        applySpeedLimit(base + delta);
+    }
+
+    private void onSpeedTextChanged(String text) {
+        if (text == null) return;
+        final String trimmed = text.trim();
+        // 空欄は「MTR の既定値に従う」を意味する
+        if (trimmed.isEmpty()) {
+            if (speedLimitKmh != SPEED_UNSET) applySpeedLimit(SPEED_UNSET);
+            return;
+        }
+        try {
+            final long value = Long.parseLong(trimmed);
+            if (value < 0L || value > SPEED_MAX) {
+                textFieldSpeed.setEditableColor2(0xFFFF0000);
+                return;
+            }
+            if (value != speedLimitKmh) {
+                applySpeedLimit(value);
+                textFieldSpeed.setEditableColor2(0xFFFFFFFF);
+            }
+        } catch (NumberFormatException e) {
+            textFieldSpeed.setEditableColor2(0xFFFF0000);
+        }
+    }
+
+    /** 選択中レールの制限速度を MTR 標準のデータ更新経路で変更する。 */
+    private void applySpeedLimit(long valueKmh) {
+        if (connectedRails.isEmpty()) return;
+        final Rail oldRail = connectedRails.get(selectedRailIndex);
+        final String hexId = oldRail.getHexId();
+        final StraightNodeBlockEntity be = getBE();
+
+        long target = valueKmh;
+        if (target < 0L) {
+            // 既定値に戻す: 変更前に退避しておいた MTR 既定値を復元する
+            final long[] original = (be == null) ? null : be.getOriginalSpeedLimit(hexId);
+            if (original == null) {
+                // 退避情報が無い (他クライアントが変更した等) 場合は現在の値に留める
+                updateSpeedLimitUI();
+                return;
+            }
+            target = original[0];
+        }
+
+        final Rail newRail = RailBuilder.withSpeedLimitKmh(oldRail, target, target);
+        if (newRail == null) {
+            updateSpeedLimitUI();
+            return;
+        }
+
+        // 既定値の退避は「変更を MTR に送る前」に完了させる。
+        // 1 回目だけ現在の値 (= MTR 既定値) を採取し、2 回目以降は既記録を温存する。
+        if (valueKmh >= 0) {
+            if (be == null || be.getOriginalSpeedLimit(hexId) == null) {
+                final long[] current = RailBuilder.getSpeedLimitKmh(oldRail);
+                BTERegistryClient.sendPacketToServer(new PacketRememberRailSpeedLimit(
+                        blockPos, hexId, current[0], current[1], false));
+            }
+        } else {
+            BTERegistryClient.sendPacketToServer(new PacketRememberRailSpeedLimit(
+                    blockPos, hexId, 0L, 0L, true));
+            if (be != null) be.forgetOriginalSpeedLimit(hexId);
+        }
+
+        final UpdateDataRequest request = new UpdateDataRequest(MinecraftClientData.getInstance());
+        request.addRail(newRail);
+        InitClient.REGISTRY_CLIENT.sendPacketToServer(new PacketUpdateData(request));
+
+        speedLimitKmh = valueKmh;
+        updateSpeedLimitUI();
+    }
+
+    private void resetSpeedLimit() {
+        applySpeedLimit(SPEED_UNSET);
+    }
+
+    // ── カント UI ─────────────────────────────────────────────────────
+
+    private void updateCantUI() {
+        if (textFieldCantStart == null) return;
+        setCantText(textFieldCantStart, cantStartDeg);
+        setCantText(textFieldCantMiddle, cantMiddleDeg);
+        setCantText(textFieldCantEnd, cantEndDeg);
+        if (btnCantClear != null) {
+            btnCantClear.setActiveMapped(hasRails
+                    && (cantStartDeg != 0.0F || cantMiddleDeg != 0.0F || cantEndDeg != 0.0F));
+        }
+    }
+
+    private static void setCantText(TextFieldWidgetExtension field, float value) {
+        final String text = formatCant(value);
+        if (!text.equals(field.getText2())) {
+            field.setText2(text);
+        }
+    }
+
+    private static String formatCant(float value) {
+        if (value == Math.round(value)) return String.valueOf((int) value);
+        return String.valueOf(value);
+    }
+
+    private void onCantChanged() {
+        if (connectedRails.isEmpty()) return;
+        final float start = parseCant(textFieldCantStart);
+        final float middle = parseCant(textFieldCantMiddle);
+        final float end = parseCant(textFieldCantEnd);
+        if (start == cantStartDeg && middle == cantMiddleDeg && end == cantEndDeg) return;
+        applyCant(start, middle, end);
+    }
+
+    private static float parseCant(TextFieldWidgetExtension field) {
+        if (field == null) return 0.0F;
+        final String text = field.getText2().trim();
+        // 入力途中（空欄・"-" のみ）は 0 として扱い、確定を待つ
+        if (text.isEmpty() || text.equals("-")) return 0.0F;
+        try {
+            return CantProfile.clamp(Float.parseFloat(text));
+        } catch (NumberFormatException e) {
+            return 0.0F;
+        }
+    }
+
+    private void resetCant() {
+        applyCant(0.0F, 0.0F, 0.0F);
+    }
+
+    /**
+     * カントを適用する。値は「このノードから見た向き」で受け取り、保存はサーバー側で
+     * レールの正規方向へ正規化する。
+     */
+    private void applyCant(float start, float middle, float end) {
+        if (connectedRails.isEmpty()) return;
+        final Rail rail = connectedRails.get(selectedRailIndex);
+        final boolean canonicalStart = isCanonicalStartFor(rail);
+
+        // サーバー往復を待たずプレビューできるよう、ローカル BE と索引へ即時反映する
+        final StraightNodeBlockEntity be = getBE();
+        if (be != null) {
+            final CantProfile profile = canonicalStart
+                    ? new CantProfile(start, middle, end)
+                    : new CantProfile(start, middle, end).reversed();
+            be.setCant(rail.getHexId(), profile);
+        }
+
+        BTERegistryClient.sendPacketToServer(new PacketSetCant(
+                blockPos, rail.getHexId(), start, middle, end, canonicalStart));
+
+        cantStartDeg = start;
+        cantMiddleDeg = middle;
+        cantEndDeg = end;
+        updateCantUI();
+    }
+
+    /**
+     * このノードがレールの正規方向（{@code Rail#getHexId()} が決める端点順）の始点か。
+     * 正規 id を {@code (self, other)} の順で作って一致すれば self が始点である。
+     */
+    private boolean isCanonicalStartFor(Rail rail) {
+        if (!(((Object) rail) instanceof RailAccessor accessor)) return true;
+        final Position p1 = accessor.bte$getPosition1();
+        final Position p2 = accessor.bte$getPosition2();
+        if (p1 == null || p2 == null) return true;
+
+        final Position self = Init.blockPosToPosition(blockPos);
+        final Position other = samePosition(self, p1) ? p2 : p1;
+        final String canonical = TwoPositionsBase.getHexId(self, other);
+        return canonical != null && canonical.equals(rail.getHexId());
+    }
+
+    private static boolean samePosition(Position a, Position b) {
+        return a != null && b != null
+                && a.getX() == b.getX() && a.getY() == b.getY() && a.getZ() == b.getZ();
     }
 
     private void updateRailProperties(double newRadius, boolean sendPacket) {
@@ -440,6 +758,16 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         btnStyle.setVisibleMapped(visible);
         btnStyleFlip.setVisibleMapped(visible);
         textFieldRadius.setVisibleMapped(visible);
+        textFieldSpeed.setVisibleMapped(visible);
+        btnSpeedMinus10.setVisibleMapped(visible);
+        btnSpeedMinus1.setVisibleMapped(visible);
+        btnSpeedPlus1.setVisibleMapped(visible);
+        btnSpeedPlus10.setVisibleMapped(visible);
+        btnSpeedDefault.setVisibleMapped(visible);
+        textFieldCantStart.setVisibleMapped(visible);
+        textFieldCantMiddle.setVisibleMapped(visible);
+        textFieldCantEnd.setVisibleMapped(visible);
+        btnCantClear.setVisibleMapped(visible);
     }
 
     private void applyRailPropertiesToServer() {
@@ -630,7 +958,25 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.no_connected_rails").getString(), cx - w / 2 + 24, cy - 18 + 4, 0xFF5555, false, GraphicsHolder.getDefaultLight());
         }
 
-        int offLabelY = hasRails ? (cy + 54) : (cy - 18 + 4);
+        final int speedLabelY = cy + SPEED_ROW_OFFSET_Y - 10;
+        graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.speed_limit").getString(),
+                cx - w / 2, speedLabelY, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
+
+        if (hasRails) {
+            final int cantLabelY = cy + CANT_ROW_OFFSET_Y - 10;
+            graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.cant").getString(),
+                    cx - w / 2, cantLabelY, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
+            // 正規方向に対する start / middle / end を入力欄の上に添える
+            final int cantLabelX = cx - w / 2 + 24;
+            graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.cant_start").getString(),
+                    cantLabelX, cantLabelY, 0xAAAAAA, false, GraphicsHolder.getDefaultLight());
+            graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.cant_middle").getString(),
+                    cantLabelX + 40, cantLabelY, 0xAAAAAA, false, GraphicsHolder.getDefaultLight());
+            graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.cant_end").getString(),
+                    cantLabelX + 80, cantLabelY, 0xAAAAAA, false, GraphicsHolder.getDefaultLight());
+        }
+
+        int offLabelY = hasRails ? (cy + OFFSET_LABEL_OFFSET_Y) : (cy - 18 + 4);
         graphicsHolder.drawText(TextHelper.translatable("gui.bte.angle_screen.node_offset").getString(), cx - w / 2, offLabelY - 4, 0xFFFFFF, false, GraphicsHolder.getDefaultLight());
     }
 

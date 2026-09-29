@@ -19,5 +19,13 @@
   "gui.bte.angle_screen.unbind": "固定を解除",
   "gui.bte.angle_screen.exact_angle": "詳細な角度指定",
   "gui.bte.angle_screen.checkbox_exact": "詳細な角度 (-180°〜180°)",
-  "gui.bte.angle_screen.checkbox_simple": "簡易な角度 (0°〜180°、自動選択)"
+  "gui.bte.angle_screen.checkbox_simple": "簡易な角度 (0°〜180°、自動選択)",
+  "gui.bte.angle_screen.speed_limit": "制限速度 (km/h)",
+  "gui.bte.angle_screen.speed_default": "既定値",
+  "gui.bte.angle_screen.speed_hint": "空欄 = MTR の既定値に従う",
+  "gui.bte.angle_screen.cant": "カント (度)",
+  "gui.bte.angle_screen.cant_start": "始点",
+  "gui.bte.angle_screen.cant_middle": "中間",
+  "gui.bte.angle_screen.cant_end": "終点",
+  "gui.bte.angle_screen.cant_clear": "クリア"
 }

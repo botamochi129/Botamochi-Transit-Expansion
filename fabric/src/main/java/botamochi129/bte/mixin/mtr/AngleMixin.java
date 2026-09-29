@@ -30,14 +30,27 @@ public abstract class AngleMixin implements AngleExtra {
 
     @Override
     public Angle bte$fromDegrees(double degrees) {
-        final float deg = (float) degrees;
+        // ★ 修正: 正規化してから比較/キャッシュする。
+        // MTR の Angle.angleDegrees は Angle.java の normalizeAngle で [-180, 180) に
+        // 正規化されているが、以前のコードは比較もキャッシュキーも正規化前の
+        // 入力角 ([-180, 180) ではない値) を使っていたため:
+        //   - 225.0 が NW(-135.0) に一致せず、同じ向きの phantom が作られていた
+        //   - 200.0 と -160.0 が別キャッシュエントリ(=別インスタンス)になっていた
+        // 結果として SidingPathFinder.getConnections の `node.angle == rail.getStartAngle(pos)`
+        // が false になり、自由角度のノードを含む区間でパスが繋がらなかった。
+        final float deg = AngleExtra.canonicalize((float) degrees);
+
         for (Angle a : Angle.values()) {
             if (a.angleDegrees == deg) return a;
         }
+
         Angle cached = AngleExtra.BTE$PHANTOM_CACHE.get(deg);
         if (cached != null) return cached;
+
+        // 名前には正規化済みの値を入れる。シリアライズ (RailSchema/PathDataSchema の
+        // angle.toString()) → 復号 (EnumHelperMixin) の往復で同一キャッシュキーに戻る。
         Angle result = bte$create("D" + deg, -1, deg);
-        ((AngleExtra) (Object) result).bte$setRadians(Math.toRadians(degrees));
+        ((AngleExtra) (Object) result).bte$setRadians(Math.toRadians(deg));
         AngleExtra.BTE$PHANTOM_CACHE.put(deg, result);
         return result;
     }
@@ -74,5 +87,15 @@ public abstract class AngleMixin implements AngleExtra {
     private void bte$sub(Angle angle, CallbackInfoReturnable<Angle> cir) {
         if (bte$isPhantom() || angle.ordinal() < 0)
             cir.setReturnValue(AngleExtra.fromDegrees(angleDegrees - angle.angleDegrees));
+    }
+
+    // MTR の getClosest45 は switch(this) なので phantom (ordinal < 0) では default に
+    // 落ちて自分自身を返す。Platform.getOBAStopDetails がこれを StopDirection の値として
+    // 使うため "D45.3" が GTFS 出力に漏れるので、45 度刻みに丸めて返す。
+    // MTR 本体は 22.5 度刻みを 8 方位 (E/SE/S/SW/W/NW/N/NE) へ丸めるので、
+    // ここに phantom が来ることはない = 22.5 度丸めは正しい。
+    @Inject(method = "getClosest45", at = @At("HEAD"), remap = false, cancellable = true)
+    private void bte$getClosest45(CallbackInfoReturnable<Angle> cir) {
+        if (bte$isPhantom()) cir.setReturnValue(Angle.fromAngle(Math.round(angleDegrees / 45.0f) * 45.0f));
     }
 }

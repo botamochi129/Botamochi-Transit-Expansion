@@ -4,14 +4,21 @@
   "compatibilityLevel": "JAVA_16",
   "mixins": [
     "mtr.AngleMixin",
+    "mtr.EnumHelperMixin",
     "mtr.ItemNodeModifierBaseMixin",
     "mtr.ItemRailModifierMixin",
     "mtr.PathDataMixin",
+    "mtr.RailAccessorMixin",
     "mtr.RailMathMixin",
+    "mtr.RailStartAngleMixin",
     "mtr.RenderRailsNodeRotationMixin",
     "mtr.RenderRailsMixin"
   ],
   "client": [
+    "minecraft.CameraCantMixin",
+    "mtr.RenderRailsCantMixin",
+    "mtr.RenderVehiclesCantMixin",
+    "mtr.RenderVehiclesConnectionCantMixin",
     "minecraft.NativeImageAccessor"
   ],
   "injectors": {

@@ -135,6 +135,7 @@ public abstract class ItemNodeModifierBaseMixin {
         return null;
     }
 
+    // ==== 診断ログ用ヘルパー (一時・確認後に削除) ====
     private static StraightNodeBlockEntity getStraightNodeBE(World world, BlockPos pos) {
         org.mtr.mapping.holder.BlockEntity rawBe = world.getBlockEntity(pos);
         if (rawBe != null && rawBe.data instanceof StraightNodeBlockEntity be) {
