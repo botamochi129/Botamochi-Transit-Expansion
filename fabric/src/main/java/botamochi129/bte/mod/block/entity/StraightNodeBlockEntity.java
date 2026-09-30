@@ -41,6 +41,15 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
 
     public static final Map<String, double[]> RAIL_MATH_DATA_MAP = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * {@code RailMath} / {@code PathData} / レンダラが共有するレール識別キーを作る。
+     * <p>
+     * 6 個の {@code long} をカンマ連結した {@link String} をそのまま {@link String#format} 相当で
+     * 組み立てているが、{@link StringBuilder} を使い回すことで毎フレームの
+     * 中間オブジェクト生成を削る。キーの <b>文字列表現は従来と完全に同一</b>。
+     */
+    private static final ThreadLocal<StringBuilder> KEY_BUILDER = ThreadLocal.withInitial(StringBuilder::new);
+
     // ── サーバティック駆動台帳 ──────────────────────────────────────────
     // MTR の Registry.registerBlockEntityType は ticker を受け付けないため
     // BlockEntityExtension#tick() はゲームから一度も呼ばれない。结果として
@@ -175,6 +184,27 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
     }
 
     /**
+     * {@link #RAIL_MATH_DATA_MAP} のキー（{@code minX,minY,minZ,maxX,maxY,maxZ}）を組み立てる。
+     * <p>端点の順序に依存しないよう、必ず小さい方を先に並べる。
+     */
+    public static String railMathKey(long x1, long y1, long z1, long x2, long y2, long z2) {
+        StringBuilder sb = KEY_BUILDER.get();
+        sb.setLength(0);
+        sb.append(Math.min(x1, x2)).append(',')
+                .append(Math.min(y1, y2)).append(',')
+                .append(Math.min(z1, z2)).append(',')
+                .append(Math.max(x1, x2)).append(',')
+                .append(Math.max(y1, y2)).append(',')
+                .append(Math.max(z1, z2));
+        return sb.toString();
+    }
+
+    /** {@link Position} 2 点から {@link #railMathKey} を組み立てる。 */
+    public static String railMathKey(Position p1, Position p2) {
+        return railMathKey(p1.getX(), p1.getY(), p1.getZ(), p2.getX(), p2.getY(), p2.getZ());
+    }
+
+    /**
      * このノードの状態を MTR の経路探索へ反映し直す予約を立てる。
      * クライアント側では不要 (描画は保存データと RAIL_MATH_DATA_MAP を使う) なので何もしない。
      */
@@ -245,8 +275,8 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             Data data = LoaderImpl.getDataForWorld(world);
             if (data == null) return; // MTR の Data は未準備。次の tick で再試行する
             if (data.positionsToRail == null || data.positionsToRail.isEmpty()) return;
-            java.util.List<Position> all = new java.util.ArrayList<>(data.positionsToRail.keySet());
-            discoveryCursor = all.iterator();
+            // ★ keySet() のコピーを作らずビューをそのまま反復する（総レール数分の配列確保を避ける）
+            discoveryCursor = data.positionsToRail.keySet().iterator();
             discoveryWorld = world;
             lastDiscoveryTick = serverTickCount;
             discoveryRuns++;
@@ -277,32 +307,37 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
         discoveryTick(world);
         if (TRACKED.isEmpty()) return;
 
-        // 変更直後の即時反映 (PENDING は通常空なので空振りコストは無い)
-        if (serverTickCount % REFRESH_INTERVAL == 0) drain(new ArrayList<>(PENDING));
         // MTR は自前のデータ保存で Rail 実体を作り直すため、そのたびに上書きが消える。
         // 再生成から経路探索までの窓を小さく保つため短周期で自己修復する。
-        if (serverTickCount % REFRESH_INTERVAL == 0) drain(new ArrayList<>(TRACKED.keySet()));
+        //
+        // ★ PENDING ⊆ TRACKED なので、PENDING を先に走らせる pass は
+        //   同じノードを同じ tick で 2 回更新するだけだった。TRACKED を 1 回走れば足りる。
+        if (serverTickCount % REFRESH_INTERVAL == 0) {
+            drain();
+        }
     }
 
-    private static void drain(List<String> keys) {
-        if (keys.isEmpty()) return;
-        for (String key : keys) {
-            java.lang.ref.WeakReference<StraightNodeBlockEntity> ref = TRACKED.get(key);
+    private static void drain() {
+        // ★ 反復中に TRACKED を触るので ConcurrentModificationException を避けるため
+        //   keySet のコピーではなく ConcurrentHashMap のイテレータを直接使う。
+        for (java.util.Iterator<Map.Entry<String, java.lang.ref.WeakReference<StraightNodeBlockEntity>>> it = TRACKED.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<String, java.lang.ref.WeakReference<StraightNodeBlockEntity>> entry = it.next();
+            java.lang.ref.WeakReference<StraightNodeBlockEntity> ref = entry.getValue();
             StraightNodeBlockEntity be = ref == null ? null : ref.get();
             if (be == null) {
-                TRACKED.remove(key);
-                PENDING.remove(key);
+                it.remove();
+                PENDING.remove(entry.getKey());
                 continue;
             }
             World world = be.getWorld2();
             if (world == null || world.isClient()) {
-                TRACKED.remove(key);
-                PENDING.remove(key);
+                it.remove();
+                PENDING.remove(entry.getKey());
                 continue;
             }
             // MTR の Data が未準備なら PENDING に残して次回へ繰り越す (取りこぼさない)
             if (be.updateBezierDataOnly()) {
-                PENDING.remove(key);
+                PENDING.remove(entry.getKey());
             }
         }
     }
@@ -344,13 +379,10 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
             Rail rail = entry.getValue();
             if (rail == null || rail.railMath == null) continue;
 
-            long x1 = Math.min(nodePos.getX(), otherPos.getX());
-            long y1 = Math.min(nodePos.getY(), otherPos.getY());
-            long z1 = Math.min(nodePos.getZ(), otherPos.getZ());
-            long x2 = Math.max(nodePos.getX(), otherPos.getX());
-            long y2 = Math.max(nodePos.getY(), otherPos.getY());
-            long z2 = Math.max(nodePos.getZ(), otherPos.getZ());
-            String railMathKey = x1 + "," + y1 + "," + z1 + "," + x2 + "," + y2 + "," + z2;
+            String railMathKey = railMathKey(
+                    nodePos.getX(), nodePos.getY(), nodePos.getZ(),
+                    otherPos.getX(), otherPos.getY(), otherPos.getZ()
+            );
 
             BlockPos otherBlockPos = Init.positionToBlockPos(otherPos);
             double otherAxis = BlockNode.getAngle(world.getBlockState(otherBlockPos)); // MTR標準ノードも軸として扱う
@@ -364,13 +396,11 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
                 otherOffZ = snbe.getOffsetZ();
             }
 
-            float geoAngleDeg = (float) Math.toDegrees(Math.atan2(
-                    otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX()));
-            float reverseGeoAngleDeg = geoAngleDeg + 180.0f;
-
             // ★ 動的に最適な出口を選択 (軸から +0° か +180° かを決める)
-            double selfExit = NodeGeometry.chooseBestExit(selfAxis, geoAngleDeg);
-            double otherExit = NodeGeometry.chooseBestExit(otherAxis, reverseGeoAngleDeg);
+            double selfExit = NodeGeometry.chooseBestExit(selfAxis,
+                    Math.toDegrees(Math.atan2(otherPos.getZ() - nodePos.getZ(), otherPos.getX() - nodePos.getX())));
+            double otherExit = NodeGeometry.chooseBestExit(otherAxis,
+                    Math.toDegrees(Math.atan2(nodePos.getZ() - otherPos.getZ(), nodePos.getX() - otherPos.getX())));
 
             double startRad = Math.toRadians(selfExit);
             double endRad = Math.toRadians(otherExit);
@@ -395,17 +425,36 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
                 angleOverride.bte$setAngleOverride(otherPos, otherExit);
             }
 
-            double[] dataToSave = new double[]{
-                    startVec.x(), startVec.y(), startVec.z(),
-                    endVec.x(), endVec.y(), endVec.z(),
-                    startRad, endRad,
-                    verticalRadius, shape.ordinal(),
-                    nodePos.getX(), nodePos.getZ(),
-                    otherPos.getX(), otherPos.getZ()
-            };
-            RAIL_MATH_DATA_MAP.put(railMathKey, dataToSave);
+            // ★ 差分書き込み: 内容が同じなら double[14] を作り直さず Map にも触らない。
+            //   4 tick 周期 x 全ノードで毎回 new していたのが描画/経路探索を重くした主因だった。
+            double[] existing = RAIL_MATH_DATA_MAP.get(railMathKey);
+            if (!bte$matchesCurveData(existing, startVec, endVec, startRad, endRad, verticalRadius, shape, nodePos, otherPos)) {
+                RAIL_MATH_DATA_MAP.put(railMathKey, new double[]{
+                        startVec.x(), startVec.y(), startVec.z(),
+                        endVec.x(), endVec.y(), endVec.z(),
+                        startRad, endRad,
+                        verticalRadius, shape.ordinal(),
+                        nodePos.getX(), nodePos.getZ(),
+                        otherPos.getX(), otherPos.getZ()
+                });
+            }
         }
+
         return true;
+    }
+
+    /** 保存済みの {@code double[14]} が今回計算した値と一致するか（完全一致でよい）。 */
+    private static boolean bte$matchesCurveData(
+            double[] d, Vector startVec, Vector endVec, double startRad, double endRad,
+            double verticalRadius, Rail.Shape shape, Position nodePos, Position otherPos
+    ) {
+        if (d == null || d.length < 14) return false;
+        return d[0] == startVec.x() && d[1] == startVec.y() && d[2] == startVec.z()
+                && d[3] == endVec.x() && d[4] == endVec.y() && d[5] == endVec.z()
+                && d[6] == startRad && d[7] == endRad
+                && d[8] == verticalRadius && (int) d[9] == shape.ordinal()
+                && d[10] == nodePos.getX() && d[11] == nodePos.getZ()
+                && d[12] == otherPos.getX() && d[13] == otherPos.getZ();
     }
 
     public void unbind() {

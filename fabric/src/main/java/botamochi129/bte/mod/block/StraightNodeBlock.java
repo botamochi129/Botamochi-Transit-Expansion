@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Map;
 
 public class StraightNodeBlock extends BlockNode implements BlockWithEntity {
+    public static StraightNodeBlockClientInteraction clientInteractionHandler = null;
 
     public StraightNodeBlock() {
         super(TransportMode.TRAIN);
@@ -28,17 +29,9 @@ public class StraightNodeBlock extends BlockNode implements BlockWithEntity {
 
     @Override
     public ActionResult onUse2(BlockState blockState, World world, BlockPos blockPos, PlayerEntity playerEntity, Hand hand, BlockHitResult hit) {
-        if (world.isClient()) {
-            BlockPos targetBlockPos = null;
-
-            // ★ ブラシを持っている場合はレールのRaycastを試み、見つかったら接続先を渡す。
-            // 未接続ノードなどでレールが見つからなくても、角度・座標編集のため常に画面を開く。
-            if (playerEntity.isHolding(Items.BRUSH.get())) {
-                final ObjectObjectImmutablePair<Rail, BlockPos> railAndBlockPos = MinecraftClientData.getInstance().getFacingRailAndBlockPos(false);
-                if (railAndBlockPos != null) {
-                    targetBlockPos = railAndBlockPos.right(); // 接続先のBlockPosを取得
-                }
-                MinecraftClient.getInstance().openScreen(new Screen(new StraightNodeAngleScreen(blockPos, world, targetBlockPos)));
+        // ★ クライアント側かつハンドラが登録されていれば、クライアント専用処理に委譲する
+        if (world.isClient() && clientInteractionHandler != null) {
+            if (clientInteractionHandler.onUseClient(blockPos, world, playerEntity)) {
                 return ActionResult.SUCCESS;
             }
         }
@@ -57,13 +50,13 @@ public class StraightNodeBlock extends BlockNode implements BlockWithEntity {
 
     @Override
     public void onStateReplaced2(BlockState state, World world, BlockPos pos, BlockState newState, boolean moved) {
-        // ブロックが別のブロックに置き換わる（＝破壊される）場合のみ処理を実行
         if (!state.isOf(newState.getBlock())) {
             if (world.isClient()) {
-                // クライアント側: 即座にローカルデータから削除し、描画を更新する（既存のロジックでOK）
-                removeConnectedRailsClient(world, pos);
+                // ★ こちらもハンドラ経由で呼び出す
+                if (clientInteractionHandler != null) {
+                    clientInteractionHandler.removeConnectedRailsClient(world, pos);
+                }
             } else {
-                // サーバー側: MTR標準の「ノード位置指定削除」パケットを使うのが最も安全で確実
                 PacketDeleteData.sendDirectlyToServerRailNodePosition(
                         ServerWorld.cast(world),
                         Init.blockPosToPosition(pos)

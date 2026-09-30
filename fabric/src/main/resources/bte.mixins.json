@@ -2,23 +2,23 @@
   "required": true,
   "minVersion": "0.8",
   "package": "botamochi129.bte.mixin",
-  "compatibilityLevel": "JAVA_16",
+  "compatibilityLevel": "JAVA_17",
   "mixins": [
     "mtr.AngleMixin",
     "mtr.ItemNodeModifierBaseMixin",
-    "mtr.ItemRailModifierMixin",
     "mtr.PathDataMixin",
     "mtr.PathDataSchemaAngleMixin",
     "mtr.RailAccessorMixin",
     "mtr.RailMathMixin",
     "mtr.RailSchemaAngleMixin",
-    "mtr.RailStartAngleMixin",
-    "mtr.RenderRailsNodeRotationMixin",
-    "mtr.RenderRailsMixin"
+    "mtr.RailStartAngleMixin"
   ],
   "client": [
     "minecraft.CameraCantMixin",
+    "mtr.ItemRailModifierMixin",
     "mtr.RenderRailsCantMixin",
+    "mtr.RenderRailsNodeRotationMixin",
+    "mtr.RenderRailsMixin",
     "mtr.RenderVehiclesCantMixin",
     "mtr.RenderVehiclesConnectionCantMixin"
   ],

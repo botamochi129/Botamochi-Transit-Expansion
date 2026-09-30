@@ -241,6 +241,20 @@ public abstract class RenderRailsCantMixin {
         }
 
         final double cross = forwardX * widthZ - forwardZ * widthX;
+
+        // 防御的フォールバック: クロス積が極めて小さい（直線レールまたは数値誤差）場合、
+        // コーナー由来のベクトルではなくサンプラーの正規接線を使って符号を決定する。
+        // これにより、QuadStripの巻き順が一致しないケースでもカント符号が安定する。
+        if (Math.abs(cross) < 1.0E-6D && sample != null && (sample[1] != 0.0D || sample[2] != 0.0D)) {
+            // サンプラーの前進ベクトルと幅ベクトルでクロス積を計算
+            final double sampleForwardX = sample[1];
+            final double sampleForwardZ = sample[2];
+            final double sampleWidthX = -sampleForwardZ;  // left normal
+            final double sampleWidthZ = sampleForwardX;
+            final double sampleCross = sampleForwardX * sampleWidthZ - sampleForwardZ * sampleWidthX;
+            return sampleCross >= 0.0D ? cantDegrees : -cantDegrees;
+        }
+
         return cross >= 0.0D ? cantDegrees : -cantDegrees;
     }
 }

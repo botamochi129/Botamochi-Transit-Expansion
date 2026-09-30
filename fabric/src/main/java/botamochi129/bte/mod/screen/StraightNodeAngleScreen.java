@@ -195,7 +195,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         connectedRails.clear();
         connectedTargetPositions.clear();
         try {
-            Data data = LoaderImpl.getDataForWorld(world);
+            Data data = MinecraftClientData.getInstance();
             if (data != null) {
                 Position currentPos = Init.blockPosToPosition(this.blockPos);
                 if (currentPos != null) {
@@ -551,7 +551,22 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         final StraightNodeBlockEntity be = getBE();
         if (be == null) return;
 
-        final CantProfile stored = be.getCant(rail.getHexId());
+        // まず rail.getHexId() で試す（クライアント側の Rail オブジェクトが持つ hexId）
+        CantProfile stored = be.getCant(rail.getHexId());
+
+        // 見つからない場合、正規 hexId（端点座標でソートして生成）でフォールバックする
+        // サーバー側は正規 hexId で保存している可能性があるため
+        if (stored == null && ((Object) rail) instanceof RailAccessor accessor) {
+            final Position p1 = accessor.bte$getPosition1();
+            final Position p2 = accessor.bte$getPosition2();
+            if (p1 != null && p2 != null) {
+                final String canonicalHexId = TwoPositionsBase.getHexId(p1, p2);
+                if (canonicalHexId != null && !canonicalHexId.equals(rail.getHexId())) {
+                    stored = be.getCant(canonicalHexId);
+                }
+            }
+        }
+
         if (stored == null) return;
 
         final CantProfile view = isCanonicalStartFor(rail) ? stored : stored.reversed();
@@ -727,6 +742,17 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             final CantProfile profile = canonicalStart
                     ? new CantProfile(start, middle, end)
                     : new CantProfile(start, middle, end).reversed();
+            // 正規 hexId でも保存しておく（クライアント側の rail.getHexId() とサーバー側が異なる場合のフォールバック用）
+            if (((Object) rail) instanceof RailAccessor accessor) {
+                final Position p1 = accessor.bte$getPosition1();
+                final Position p2 = accessor.bte$getPosition2();
+                if (p1 != null && p2 != null) {
+                    final String canonicalHexId = TwoPositionsBase.getHexId(p1, p2);
+                    if (canonicalHexId != null && !canonicalHexId.equals(rail.getHexId())) {
+                        be.setCant(canonicalHexId, profile);
+                    }
+                }
+            }
             be.setCant(rail.getHexId(), profile);
         }
 
@@ -1020,7 +1046,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private List<BlockPos> findConnectedNodePositions() {
         List<BlockPos> result = new ArrayList<>();
         try {
-            Data data = LoaderImpl.getDataForWorld(world);
+            Data data = MinecraftClientData.getInstance();
             if (data == null) return result;
             Position currentPos = Init.blockPosToPosition(this.blockPos);
             if (currentPos == null) return result;
@@ -1035,7 +1061,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     private List<Rail> findConnectedRails() {
         List<Rail> result = new ArrayList<>();
         try {
-            Data data = LoaderImpl.getDataForWorld(world);
+            Data data = MinecraftClientData.getInstance();
             if (data == null) return result;
             Position currentPos = Init.blockPosToPosition(this.blockPos);
             if (currentPos == null) return result;

@@ -8,6 +8,7 @@ import botamochi129.bte.mod.rail.CantProfile;
 import org.mtr.core.data.Data;
 import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
+import org.mtr.core.data.TwoPositionsBase;
 import org.mtr.mapping.holder.BlockEntity;
 import org.mtr.mapping.holder.BlockPos;
 import org.mtr.mapping.holder.BlockState;
@@ -28,6 +29,9 @@ import org.mtr.mod.Init;
  *
  * <p>対向端が BTE ノードであれば同じ値も書き込む。こうすることで、
  * どちらのノードから編集しても BTE 側の 2 つの BE が食い違わない。
+ *
+ * <p>また、クライアント側の rail.getHexId() とサーバー側の正規 hexId が異なる場合
+ * （レール再作成時に端点順序が変わった等）に備え、正規 hexId でも保存する。
  */
 public class PacketSetCant extends PacketHandler {
 
@@ -88,9 +92,28 @@ public class PacketSetCant extends PacketHandler {
                 profile = profile.reversed();
             }
 
+            // パケットの railHexId と正規 hexId の両方で保存（hexId 不一致対策）
             be.setCant(railHexId, profile);
             be.markDirty2();
             be.syncToClients();
+
+            // 正規 hexId も計算して保存
+            final Data data = LoaderImpl.getDataForWorld(world);
+            if (data != null) {
+                final Rail rail = data.railIdMap.get(railHexId);
+                if (rail != null && ((Object) rail) instanceof RailAccessor accessor) {
+                    final Position p1 = accessor.bte$getPosition1();
+                    final Position p2 = accessor.bte$getPosition2();
+                    if (p1 != null && p2 != null) {
+                        final String canonicalHexId = TwoPositionsBase.getHexId(p1, p2);
+                        if (canonicalHexId != null && !canonicalHexId.equals(railHexId)) {
+                            be.setCant(canonicalHexId, profile);
+                            be.markDirty2();
+                            be.syncToClients();
+                        }
+                    }
+                }
+            }
 
             applyToOtherEndpoint(world, railHexId, profile);
         });
@@ -126,5 +149,19 @@ public class PacketSetCant extends PacketHandler {
         otherBe.setCant(railHexId, profile);
         otherBe.markDirty2();
         otherBe.syncToClients();
+
+        // 対向端にも正規 hexId で保存
+        if (((Object) rail) instanceof RailAccessor accessor2) {
+            final Position p1 = accessor2.bte$getPosition1();
+            final Position p2 = accessor2.bte$getPosition2();
+            if (p1 != null && p2 != null) {
+                final String canonicalHexId = TwoPositionsBase.getHexId(p1, p2);
+                if (canonicalHexId != null && !canonicalHexId.equals(railHexId)) {
+                    otherBe.setCant(canonicalHexId, profile);
+                    otherBe.markDirty2();
+                    otherBe.syncToClients();
+                }
+            }
+        }
     }
 }
