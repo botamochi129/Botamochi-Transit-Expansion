@@ -1,9 +1,7 @@
 package botamochi129.bte.mapping;
 
-import botamochi129.bte.mod.data.AngleHelper;
 import net.minecraftforge.fml.loading.FMLPaths;
 import org.mtr.core.data.Data;
-import org.mtr.core.tool.Angle;
 import org.mtr.mapping.holder.*;
 import org.mtr.mod.Init;
 
@@ -18,13 +16,6 @@ import java.util.Optional;
 public class LoaderImpl {
     public static boolean isRainingAt(World world, BlockPos pos) {
         return world.data.isRainingAt(pos.data);
-    }
-
-    /**
-     * Creates a dynamic Angle instance from degrees via AngleHelper bridge.
-     */
-    public static Angle createDynamicAngle(String name, int ordinal, float degrees) {
-        return AngleHelper.createDynamicAngle(name, ordinal, degrees);
     }
 
     private static Field mainField;
@@ -106,29 +97,16 @@ public class LoaderImpl {
 
     /** Get a block settings forcing it to be solid, as we don't want water to break our block. */
     public static BlockSettings getSolidBlockSettings(BlockSettings settings) {
-        #if MC_VERSION >= "12001"
-            return new BlockSettings(settings.data.forceSolidOn());
-        #else
-            return settings;
-        #endif
+        return new BlockSettings(settings.data.forceSolidOn());
     }
 
     public static Item getItemFromId(Identifier id) {
-        #if MC_VERSION < "11903"
-            final Optional<net.minecraft.world.item.Item> itm;
-            itm = net.minecraft.core.Registry.ITEM.getOptional(id.data);
-        #else
-            final Optional<net.minecraft.world.item.Item> itm;
-            itm = net.minecraft.core.registries.BuiltInRegistries.ITEM.getOptional(id.data);
-        #endif
+        final Optional<net.minecraft.world.item.Item> itm;
+        itm = net.minecraft.core.registries.BuiltInRegistries.ITEM.getOptional(id.data);
         return itm.map(Item::new).orElse(null);
     }
 
     public static Identifier getIdFromItem(Item itm) {
-        #if MC_VERSION < "11903"
-            return new Identifier(net.minecraft.core.Registry.ITEM.getKey(itm.data));
-        #else
-            return new Identifier(net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(itm.data));
-        #endif
+        return new Identifier(net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(itm.data));
     }
 }

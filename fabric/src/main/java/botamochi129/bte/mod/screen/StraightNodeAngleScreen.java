@@ -117,6 +117,50 @@ public class StraightNodeAngleScreen extends ScreenExtension {
 
     private boolean isExactMode = false;
 
+    // ── Loader 差異吸収用ヘルパー ────────────────────────────────────
+
+    /**
+     * ボタン生成。MTR マッピングの PressAction を使用して両プラットフォームで統一。
+     * ラベルは MTR マッピングの MutableText 型を使用。
+     */
+    private ButtonWidgetExtension createButton(int x, int y, int width, int height, MutableText label, Runnable action) {
+        return new ButtonWidgetExtension(x, y, width, height, label, new PressAction() {
+            @Override
+            public void onPress2(ButtonWidget btn) {
+                action.run();
+            }
+        });
+    }
+
+    /**
+     * スライダーの匿名クラスで applyValue2() を実装。
+     */
+    private SliderWidgetExtension createSlider(int x, int y, int width, int height, String initialMessage,
+            java.util.function.DoubleConsumer onApply) {
+        return new SliderWidgetExtension(x, y, width, height, initialMessage) {
+            @Override
+            public void applyValue2() {
+                onApply.accept(this.getValueMapped());
+            }
+            @Override
+            protected void updateMessage2() {}
+        };
+    }
+
+    /**
+     * 翻訳可能なラベルを MutableText として生成（Loader 差異吸収）。
+     */
+    private MutableText label(String key) {
+        return TextHelper.translatable(key);
+    }
+
+    /**
+     * リテラル文字列ラベルを MutableText として生成（Loader 差異吸収）。
+     */
+    private MutableText literal(String text) {
+        return TextHelper.literal(text);
+    }
+
     public StraightNodeAngleScreen(BlockPos blockPos, World world, BlockPos targetPos) {
         // ★ 修正: タイトルを言語キーから取得
         super(TextHelper.translatable("gui.bte.angle_screen.title").getString());
@@ -183,7 +227,8 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         }
 
         if (!foundTarget) {
-            org.mtr.mapping.holder.ClientPlayerEntity player = MinecraftClient.getInstance().getPlayerMapped();
+            final MinecraftClient client = MinecraftClient.getInstance();
+            org.mtr.mapping.holder.ClientPlayerEntity player = client.getPlayerMapped();
             if (player != null && !connectedTargetPositions.isEmpty()) {
                 float yaw = 0;
                 if (client != null) {
@@ -223,31 +268,25 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         updateRailPropsFromConnected();
         double initialDisplay = getInitialDisplayAngle();
 
-        slider = new SliderWidgetExtension(cx - w / 2, cy - 40, w - 24, rowH, String.format("%.1f°", initialDisplay)) {
-            @Override
-            public void applyValue2() {
-                double val = this.getValueMapped();
-                double min = isExactMode ? EXACT_MIN_ANGLE : SIMPLE_MIN_ANGLE;
-                double max = isExactMode ? EXACT_MAX_ANGLE : SIMPLE_MAX_ANGLE;
+        slider = createSlider(cx - w / 2, cy - 40, w - 24, rowH, String.format("%.1f°", initialDisplay), val -> {
+            double min = isExactMode ? EXACT_MIN_ANGLE : SIMPLE_MIN_ANGLE;
+            double max = isExactMode ? EXACT_MAX_ANGLE : SIMPLE_MAX_ANGLE;
 
-                double newUIAngle = min + (val * (max - min));
-                double newInternalAngle = resolveInternalAngle(newUIAngle);
+            double newUIAngle = min + (val * (max - min));
+            double newInternalAngle = resolveInternalAngle(newUIAngle);
 
-                if (!isBound || newInternalAngle != currentAngle) {
-                    isBound = true;
-                    currentAngle = newInternalAngle;
+            if (!isBound || newInternalAngle != currentAngle) {
+                isBound = true;
+                currentAngle = newInternalAngle;
 
-                    double displayAngle = isExactMode ? toExactUI(newInternalAngle) : toSimpleUI(newInternalAngle);
-                    this.setMessage2(Text.of(String.format("%.1f°", displayAngle)));
-                    textField.setText2(String.format("%.1f", displayAngle));
+                double displayAngle = isExactMode ? toExactUI(newInternalAngle) : toSimpleUI(newInternalAngle);
+                slider.setMessage2(Text.of(String.format("%.1f°", displayAngle)));
+                textField.setText2(String.format("%.1f", displayAngle));
 
-                    updateUIState();
-                    apply();
-                }
+                updateUIState();
+                apply();
             }
-            @Override
-            protected void updateMessage2() {}
-        };
+        });
         slider.setValueMapped(getSliderValueFromAngle(initialDisplay));
         slider.setActiveMapped(true);
         addChild(new ClickableWidget(slider));
@@ -258,32 +297,32 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         textField.setChangedListener2(this::onTextChanged);
         addChild(new ClickableWidget(textField));
 
-        btnMode = new ButtonWidgetExtension(cx + w / 2 - 22, cy - 40, 20, rowH, "⇄", btn -> switchMode());
+        btnMode = createButton(cx + w / 2 - 22, cy - 40, 20, rowH, literal("⇄"), this::switchMode);
         addChild(new ClickableWidget(btnMode));
 
         int railSelectY = cy - 18;
-        btnPrevRail = new ButtonWidgetExtension(cx - w / 2, railSelectY, 20, rowH, "<", btn -> selectRail(selectedRailIndex - 1));
-        btnNextRail = new ButtonWidgetExtension(cx + w / 2 - 20, railSelectY, 20, rowH, ">", btn -> selectRail(selectedRailIndex + 1));
+        btnPrevRail = createButton(cx - w / 2, railSelectY, 20, rowH, literal("<"), () -> selectRail(selectedRailIndex - 1));
+        btnNextRail = createButton(cx + w / 2 - 20, railSelectY, 20, rowH, literal(">"), () -> selectRail(selectedRailIndex + 1));
         addChild(new ClickableWidget(btnPrevRail));
         addChild(new ClickableWidget(btnNextRail));
 
         int railY = cy + 4;
         int btnW = w / 3;
 
-        btnShape = new ButtonWidgetExtension(cx - w / 2, railY, btnW, rowH, TextHelper.literal(""), btn -> {
+        btnShape = createButton(cx - w / 2, railY, btnW, rowH, literal(""), () -> {
             currentShape = currentShape == Rail.Shape.QUADRATIC ? Rail.Shape.TWO_RADII : Rail.Shape.QUADRATIC;
             updateRailProperties(currentRadius, true);
         });
         addChild(new ClickableWidget(btnShape));
 
-        btnStyle = new ButtonWidgetExtension(cx - w / 2 + btnW, railY, btnW, rowH, TranslationProvider.GUI_MTR_RAIL_STYLES.getMutableText(), btn -> {
+        btnStyle = createButton(cx - w / 2 + btnW, railY, btnW, rowH, label("gui.mtr.rail_styles"), () -> {
             if (!connectedRails.isEmpty()) {
                 MinecraftClient.getInstance().openScreen(new Screen(RailStyleSelectorScreen.create(connectedRails.get(selectedRailIndex))));
             }
         });
         addChild(new ClickableWidget(btnStyle));
 
-        btnStyleFlip = new ButtonWidgetExtension(cx - w / 2 + btnW * 2, railY, btnW, rowH, TranslationProvider.GUI_MTR_FLIP_STYLES.getMutableText(), btn -> flipStyles());
+        btnStyleFlip = createButton(cx - w / 2 + btnW * 2, railY, btnW, rowH, label("gui.mtr.flip_styles"), this::flipStyles);
         addChild(new ClickableWidget(btnStyleFlip));
 
         int radiusY = railY + rowH + 4;
@@ -293,13 +332,13 @@ public class StraightNodeAngleScreen extends ScreenExtension {
         textFieldRadius = new TextFieldWidgetExtension(cx - w / 2, radiusY, textFieldW, rowH, 256, TextCase.DEFAULT, "[^\\d\\.]", "0");
         addChild(new ClickableWidget(textFieldRadius));
 
-        btnMinus10 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + 2, radiusY, radiusBtnW, rowH, TextHelper.literal("-10"), btn -> updateRailProperties(currentRadius - 10, true));
-        btnMinus1 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + 2 + radiusBtnW, radiusY, radiusBtnW, rowH, TextHelper.literal("-1"), btn -> updateRailProperties(currentRadius - 1, true));
-        btnMinus01 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + 2 + radiusBtnW * 2, radiusY, radiusBtnW, rowH, TextHelper.literal("-.1"), btn -> updateRailProperties(currentRadius - 0.1, true));
+        btnMinus10 = createButton(cx - w / 2 + textFieldW + 2, radiusY, radiusBtnW, rowH, literal("-10"), () -> updateRailProperties(currentRadius - 10, true));
+        btnMinus1 = createButton(cx - w / 2 + textFieldW + 2 + radiusBtnW, radiusY, radiusBtnW, rowH, literal("-1"), () -> updateRailProperties(currentRadius - 1, true));
+        btnMinus01 = createButton(cx - w / 2 + textFieldW + 2 + radiusBtnW * 2, radiusY, radiusBtnW, rowH, literal("-.1"), () -> updateRailProperties(currentRadius - 0.1, true));
 
-        btnPlus01 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + 2 + radiusBtnW * 3, radiusY, radiusBtnW, rowH, TextHelper.literal("+.1"), btn -> updateRailProperties(currentRadius + 0.1, true));
-        btnPlus1 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + 2 + radiusBtnW * 4, radiusY, radiusBtnW, rowH, TextHelper.literal("+1"), btn -> updateRailProperties(currentRadius + 1, true));
-        btnPlus10 = new ButtonWidgetExtension(cx - w / 2 + textFieldW + 2 + radiusBtnW * 5, radiusY, radiusBtnW, rowH, TextHelper.literal("+10"), btn -> updateRailProperties(currentRadius + 10, true));
+        btnPlus01 = createButton(cx - w / 2 + textFieldW + 2 + radiusBtnW * 3, radiusY, radiusBtnW, rowH, literal("+.1"), () -> updateRailProperties(currentRadius + 0.1, true));
+        btnPlus1 = createButton(cx - w / 2 + textFieldW + 2 + radiusBtnW * 4, radiusY, radiusBtnW, rowH, literal("+1"), () -> updateRailProperties(currentRadius + 1, true));
+        btnPlus10 = createButton(cx - w / 2 + textFieldW + 2 + radiusBtnW * 5, radiusY, radiusBtnW, rowH, literal("+10"), () -> updateRailProperties(currentRadius + 10, true));
 
         addChild(new ClickableWidget(btnMinus10)); addChild(new ClickableWidget(btnMinus1)); addChild(new ClickableWidget(btnMinus01));
         addChild(new ClickableWidget(btnPlus01)); addChild(new ClickableWidget(btnPlus1)); addChild(new ClickableWidget(btnPlus10));
@@ -320,17 +359,12 @@ public class StraightNodeAngleScreen extends ScreenExtension {
                 TextCase.DEFAULT, "[^\\d\\-]", "");
         addChild(new ClickableWidget(textFieldSpeed));
 
-        btnSpeedMinus10 = new ButtonWidgetExtension(cx - w / 2 + speedFieldW + 2, speedY, speedBtnW, rowH,
-                TextHelper.literal("-10"), btn -> stepSpeedLimit(-10));
-        btnSpeedMinus1 = new ButtonWidgetExtension(cx - w / 2 + speedFieldW + 2 + speedBtnW, speedY, speedBtnW, rowH,
-                TextHelper.literal("-1"), btn -> stepSpeedLimit(-1));
-        btnSpeedPlus1 = new ButtonWidgetExtension(cx - w / 2 + speedFieldW + 2 + speedBtnW * 2, speedY, speedBtnW, rowH,
-                TextHelper.literal("+1"), btn -> stepSpeedLimit(1));
-        btnSpeedPlus10 = new ButtonWidgetExtension(cx - w / 2 + speedFieldW + 2 + speedBtnW * 3, speedY, speedBtnW, rowH,
-                TextHelper.literal("+10"), btn -> stepSpeedLimit(10));
+        btnSpeedMinus10 = createButton(cx - w / 2 + speedFieldW + 2, speedY, speedBtnW, rowH, literal("-10"), () -> stepSpeedLimit(-10));
+        btnSpeedMinus1 = createButton(cx - w / 2 + speedFieldW + 2 + speedBtnW, speedY, speedBtnW, rowH, literal("-1"), () -> stepSpeedLimit(-1));
+        btnSpeedPlus1 = createButton(cx - w / 2 + speedFieldW + 2 + speedBtnW * 2, speedY, speedBtnW, rowH, literal("+1"), () -> stepSpeedLimit(1));
+        btnSpeedPlus10 = createButton(cx - w / 2 + speedFieldW + 2 + speedBtnW * 3, speedY, speedBtnW, rowH, literal("+10"), () -> stepSpeedLimit(10));
 
-        btnSpeedDefault = new ButtonWidgetExtension(cx + w / 2 - speedDefaultW, speedY, speedDefaultW, rowH,
-                TextHelper.translatable("gui.bte.angle_screen.speed_default"), btn -> resetSpeedLimit());
+        btnSpeedDefault = createButton(cx + w / 2 - speedDefaultW, speedY, speedDefaultW, rowH, label("gui.bte.angle_screen.speed_default"), this::resetSpeedLimit);
 
         addChild(new ClickableWidget(btnSpeedMinus10));
         addChild(new ClickableWidget(btnSpeedMinus1));
@@ -352,8 +386,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
                 TextCase.DEFAULT, "[^\\d\\-]", "");
         textFieldCantEnd = new TextFieldWidgetExtension(cx - w / 2 + (cantFieldW + 2) * 2, cantY, cantFieldW, rowH, 6,
                 TextCase.DEFAULT, "[^\\d\\-]", "");
-        btnCantClear = new ButtonWidgetExtension(cx + w / 2 - cantClearW, cantY, cantClearW, rowH,
-                TextHelper.translatable("gui.bte.angle_screen.cant_clear"), btn -> resetCant());
+        btnCantClear = createButton(cx + w / 2 - cantClearW, cantY, cantClearW, rowH, label("gui.bte.angle_screen.cant_clear"), this::resetCant);
 
         addChild(new ClickableWidget(textFieldCantStart));
         addChild(new ClickableWidget(textFieldCantMiddle));
@@ -374,11 +407,11 @@ public class StraightNodeAngleScreen extends ScreenExtension {
 
         int bottomY = offY + (rowH + 2) * 3 + 6;
 
-        btnReturn = new ButtonWidgetExtension(cx - w / 2, bottomY, 20, rowH, "X", btn -> onClose2());
+        btnReturn = createButton(cx - w / 2, bottomY, 20, rowH, literal("X"), this::onClose2);
         addChild(new ClickableWidget(btnReturn));
 
         // ★ 修正: Unbind ボタンのラベルを言語キー化
-        btnUnbind = new ButtonWidgetExtension(cx - w / 2 + 24, bottomY, 60, rowH, TextHelper.translatable("gui.bte.angle_screen.unbind"), btn -> unbind());
+        btnUnbind = createButton(cx - w / 2 + 24, bottomY, 60, rowH, label("gui.bte.angle_screen.unbind"), this::unbind);
         btnUnbind.setActiveMapped(isBound);
         addChild(new ClickableWidget(btnUnbind));
 
@@ -410,17 +443,12 @@ public class StraightNodeAngleScreen extends ScreenExtension {
     }
 
     private void setupOffsetUI(int cx, int w, int mainW, int y, int rowH, int axis) {
-        SliderWidgetExtension s = new SliderWidgetExtension(cx - w / 2, y, mainW, rowH, "") {
-            @Override
-            public void applyValue2() {
-                double val = this.getValueMapped() * 2.0 - 1.0;
-                val = Math.round(val / 0.05) * 0.05;
-                double currentVal = (axis == 0) ? offsetX : (axis == 1) ? offsetY : offsetZ;
-                if (Math.abs(val - currentVal) > 0.0001) updateOffset(axis, val);
-            }
-            @Override
-            protected void updateMessage2() {}
-        };
+        SliderWidgetExtension s = createSlider(cx - w / 2, y, mainW, rowH, "", val -> {
+            val = val * 2.0 - 1.0;
+            val = Math.round(val / 0.05) * 0.05;
+            double currentVal = (axis == 0) ? offsetX : (axis == 1) ? offsetY : offsetZ;
+            if (Math.abs(val - currentVal) > 0.0001) updateOffset(axis, val);
+        });
 
         TextFieldWidgetExtension t = new TextFieldWidgetExtension(cx - w / 2, y, mainW, rowH, 10, TextCase.DEFAULT, "[^\\d\\.\\-]", "0");
         t.setChangedListener2(text -> {
@@ -432,7 +460,7 @@ public class StraightNodeAngleScreen extends ScreenExtension {
             } catch (Exception ignored) {}
         });
 
-        ButtonWidgetExtension b = new ButtonWidgetExtension(cx + w / 2 - 22, y, 20, rowH, "⇄", btn -> {
+        ButtonWidgetExtension b = createButton(cx + w / 2 - 22, y, 20, rowH, literal("⇄"), () -> {
             if (axis == 0) sliderModeX = !sliderModeX;
             else if (axis == 1) sliderModeY = !sliderModeY;
             else sliderModeZ = !sliderModeZ;

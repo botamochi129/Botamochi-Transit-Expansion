@@ -25,7 +25,7 @@ import java.util.UUID;
 public abstract class ItemRailModifierMixin {
 
     @Inject(method = "createRail", at = @At("RETURN"))
-    private static void bte$applyCustomBezierToPreview(
+    private void bte$applyCustomBezierToPreview(
             UUID uuid, TransportMode transportMode,
             BlockState stateStart, BlockState stateEnd,
             BlockPos posStartMapped, BlockPos posEndMapped,

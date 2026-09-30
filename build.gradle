@@ -15,7 +15,7 @@ configure(subprojects) {
 	}
 
 	base {
-		archivesName = "${rootProject.findProperty("archives_base_name")}-${project.findProperty("loader_name")}"
+		archivesName = "${rootProject.findProperty("archives_base_name")}-${project.loader_name}"
 	}
 
 	dependencies {
@@ -52,14 +52,8 @@ configure(subprojects) {
 		full_mod_version = version
 	}
 
-	/* Manifold support */
-	tasks.withType(JavaCompile).forEach {
-		it.options.compilerArgs += [
-				"-Xplugin:Manifold",
-				"-AMC_VERSION=$merged_mc_version",
-				"-ALOADER=${project.findProperty("loader_name")}"
-		]
-	}
+	/* Manifold の compilerArgs は各サブプロジェクトの build.gradle で設定する
+	   (loader_name はサブプロジェクトの評価時に確定するため) */
 
 	compileJava {
 		options.encoding = 'UTF-8'
@@ -118,7 +112,7 @@ configure(subprojects) {
 tasks.register("setupFiles") {
 	var sourceModloader = "fabric"
 
-	doLast {
+doLast {
 		for(var targetModloader : ["forge"]) {
 			delete fileTree("${targetModloader}/src/main/java/botamochi129/bte/mod")
 			delete fileTree("${targetModloader}/src/main/java/botamochi129/bte/mixin")

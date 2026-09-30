@@ -2,6 +2,8 @@ plugins {
     id 'fabric-loom' version "${loom_version}"
 }
 
+project.setProperty("loader_name", "fabric")
+
 loom {
     runConfigs.configureEach {
         ideConfigGenerated = true
@@ -40,6 +42,11 @@ dependencies {
 
 tasks.withType(JavaCompile).configureEach {
     it.options.release = java_version
+    it.options.compilerArgs += [
+            "-Xplugin:Manifold",
+            "-AMC_VERSION=${project.merged_mc_version_int}",
+            "-ALOADER=${project.properties.loader_name}"
+    ]
 }
 
 configurations.configureEach {

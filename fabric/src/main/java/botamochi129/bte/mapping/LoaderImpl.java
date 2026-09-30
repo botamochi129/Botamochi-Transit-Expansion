@@ -22,7 +22,6 @@ public class LoaderImpl {
     private static Field simulatorsField;
     private static Field worldIdListField;
     private static boolean reflectionFailed = false;
-    private static boolean resolveWarned = false;
 
     static {
         try {
@@ -81,17 +80,8 @@ public class LoaderImpl {
             Object simulator = simulators.get(index);
             if (simulator == null) return null;
 
-            if (resolveWarned) {
-                resolveWarned = false;
-                System.out.println("[BTE][Data] MTR data resolution recovered for " + worldId);
-            }
             return (Data) simulator;
         } catch (Exception e) {
-            if (!resolveWarned) {
-                resolveWarned = true;
-                System.out.println("[BTE][Data] transient failure resolving MTR data (will retry): "
-                        + e.getClass().getSimpleName() + ": " + e.getMessage());
-            }
             return null;
         }
     }
@@ -116,28 +106,16 @@ public class LoaderImpl {
     }
 
     public static BlockSettings getSolidBlockSettings(BlockSettings settings) {
-        #if MC_VERSION >= "12001"
-            return new BlockSettings(settings.data.solid());
-        #else
-        return settings;
-        #endif
+        return new BlockSettings(settings.data.solid());
     }
 
     public static Item getItemFromId(Identifier id) {
         final Optional<net.minecraft.item.Item> itm;
-        #if MC_VERSION < "11903"
-            itm = net.minecraft.util.registry.Registry.ITEM.getOrEmpty(id.data);
-        #else
-            itm = net.minecraft.registry.Registries.ITEM.getOrEmpty(id.data);
-        #endif
+        itm = net.minecraft.registry.Registries.ITEM.getOrEmpty(id.data);
         return itm.map(Item::new).orElse(null);
     }
 
     public static Identifier getIdFromItem(Item itm) {
-        #if MC_VERSION < "11903"
-            return new Identifier(net.minecraft.util.registry.Registry.ITEM.getId(itm.data));
-        #else
-            return new Identifier(net.minecraft.registry.Registries.ITEM.getId(itm.data));
-        #endif
+        return new Identifier(net.minecraft.registry.Registries.ITEM.getId(itm.data));
     }
 }

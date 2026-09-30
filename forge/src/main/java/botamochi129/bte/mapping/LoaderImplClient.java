@@ -1,6 +1,5 @@
 package botamochi129.bte.mapping;
 
-import botamochi129.bte.mixin.minecraft.NativeImageAccessor;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.client.player.AbstractClientPlayer;
 import org.mtr.mapping.holder.*;
@@ -23,10 +22,6 @@ public class LoaderImplClient {
                 }, url, true)
             )
         );
-    }
-
-    public static long getNativeImagePointer(NativeImage nativeImage) {
-        return ((NativeImageAccessor)(Object)nativeImage.data).getPixels();
     }
 
     public static List<PlayerEntity> getWorldPlayers(ClientWorld world) {

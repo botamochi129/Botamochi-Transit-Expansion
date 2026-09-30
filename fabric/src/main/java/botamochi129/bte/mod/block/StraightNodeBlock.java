@@ -1,6 +1,5 @@
 package botamochi129.bte.mod.block;
 
-import botamochi129.bte.mapping.LoaderImpl;
 import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
 import botamochi129.bte.mod.screen.StraightNodeAngleScreen;
 import org.mtr.core.data.Data;

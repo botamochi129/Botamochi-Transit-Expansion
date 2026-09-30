@@ -3,20 +3,27 @@
   "minVersion": "0.8",
   "package": "botamochi129.bte.mixin",
   "compatibilityLevel": "JAVA_16",
+  "refmap": "BTE-forge-refmap.json",
   "mixins": [
+    "mtr.AngleMixin",
     "mtr.ItemNodeModifierBaseMixin",
     "mtr.ItemRailModifierMixin",
     "mtr.PathDataMixin",
+    "mtr.PathDataSchemaAngleMixin",
+    "mtr.RailAccessorMixin",
     "mtr.RailMathMixin",
-    "mtr.RailMixin",
-    "mtr.RenderRailsMixin",
-    "mtr.RenderRailsNodeRotationMixin"
+    "mtr.RailSchemaAngleMixin",
+    "mtr.RailStartAngleMixin",
+    "mtr.RenderRailsNodeRotationMixin",
+    "mtr.RenderRailsMixin"
   ],
   "client": [
-    "minecraft.NativeImageAccessor"
+    "minecraft.CameraCantMixin",
+    "mtr.RenderRailsCantMixin",
+    "mtr.RenderVehiclesCantMixin",
+    "mtr.RenderVehiclesConnectionCantMixin"
   ],
   "injectors": {
     "defaultRequire": 1
-  },
-  "refmap": "bte.refmap.json"
+  }
 }

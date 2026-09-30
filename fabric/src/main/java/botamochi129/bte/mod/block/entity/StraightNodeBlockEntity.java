@@ -12,10 +12,6 @@ import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
 import org.mtr.core.tool.Angle;
 import org.mtr.core.tool.Vector;
-import org.mtr.mapping.holder.BlockEntity;
-import org.mtr.mapping.holder.BlockPos;
-import org.mtr.mapping.holder.BlockState;
-import org.mtr.mapping.holder.CompoundTag;
 import org.mtr.mapping.holder.ServerWorld;
 import org.mtr.mapping.holder.World;
 import org.mtr.mapping.mapper.BlockEntityExtension;
@@ -26,6 +22,11 @@ import org.mtr.mod.block.IBlock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+
+import org.mtr.mapping.holder.BlockPos;
+import org.mtr.mapping.holder.BlockState;
+import org.mtr.mapping.holder.CompoundTag;
+import org.mtr.mapping.holder.BlockEntity;
 
 public class StraightNodeBlockEntity extends BlockEntityExtension {
 

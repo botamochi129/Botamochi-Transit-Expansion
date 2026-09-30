@@ -90,7 +90,7 @@ public class PacketUpdateStraightNodeAngle extends PacketHandler {
                 // bind() 内で既に呼ばれている可能性もあるが、
                 // オフセット変更時にも確実にレールを再生成させるため明示的に呼び出す
                 be.updateConnectedRails(true);
-                be.markDirty();
+                be.markDirty2();
             }
         });
     }

@@ -2,10 +2,65 @@ plugins {
     id "net.minecraftforge.gradle" version "6.0.36"
 }
 
+project.setProperty("loader_name", "forge")
+
+// ▼ Mixin refmap wiring
+// Fabric gets this for free: Loom runs the Mixin annotation processor, writes
+// "<archivesBaseName>-refmap.json" and injects the "refmap" field into every mixin
+// config in the remapped jar. ForgeGradle has no mixin support at all, so without
+// the block below the Forge jar ships no refmap.
+//
+// That only bites mixins that target *Minecraft* members. ForgeGradle's reobf pass
+// rewrites real bytecode references (so the handler body calling PoseStack#mulPose
+// becomes m_252781_) but it cannot rewrite the *string literals* inside @Mixin / @At
+// annotations. In the shipped jar those literals stay "renderLevel" while the method
+// is really m_109089_, Mixin logs "No refMap loaded" and fails with
+//   InvalidInjectionException: @Redirect ... could not find any targets matching
+//   'renderLevel(FJLcom/mojang/blaze3d/vertex/PoseStack;)V' in GameRenderer
+// which aborts the game during Bootstrap (RenderStateShard.<clinit>). The dev run
+// never sees it because its classpath uses the same deobfuscated names we compile
+// against, so this is a production-only crash.
+//
+// The refmap is keyed "searge" because that is the obfuscation type Forge uses at
+// runtime, and because MTR's own shipped refmap uses the same key.
+//
+// The mapping is fed to the AP through ObfuscationServiceFG3, whose provider is
+// MappingProviderTSrg. That provider wants the *tsrg2* file ForgeGradle's reobf pass
+// itself consumes, i.e. createMcpToSrg/output.tsrg (named on the left, SRG on the
+// right: "renderLevel (FJL...PoseStack;)V m_109089_").
+//
+// FG3 is mutually exclusive with ObfuscationServiceMCP: in mixin 0.8.5 both services
+// register an obfuscation type keyed "searge", each only if getOptions("mappingTypes")
+// does/does not contain "tsrg". MCP registers itself only when "tsrg" is ABSENT and
+// reads SrgFormat, so feeding it createSrgToMcp/output.srg silently fails every
+// lookup: its BiMap is keyed by the left column (SRG), while the AP asks with the
+// named method it compiled against. mappingTypes=tsrg swaps in the service whose
+// direction actually matches.
+def mixinRefmapName = "${rootProject.findProperty("archives_base_name")}-${project.properties.loader_name}-refmap.json"
+def mixinRefmapFile = layout.buildDirectory.file("mixin/${mixinRefmapName}")
+def mixinMappingsFile = layout.buildDirectory.file("createMcpToSrg/output.tsrg")
+
+// Forge 1.20.1 discovers mixin configs through the jar manifest attribute
+// "MixinConfigs" (MixinPlatformAgentDefault reads Constants.ManifestAttributes.Mixins
+// and calls MixinPlatformManager.addConfig). The [[mixins]] table in mods.toml is
+// ignored, and a MOD_CLASSES *directory* has no manifest at all, so a dev run started
+// from Gradle or the IDE silently loaded zero BTE mixins. Point the dev run at a real
+// jar so the dev environment matches an actual installation.
+def runModJar = tasks.register('runModJar', Jar) {
+    dependsOn tasks.named('classes')
+    archiveClassifier = 'run'
+    from sourceSets.main.output
+    from mixinRefmapFile
+    manifest {
+        attributes('MixinConfigs': 'bte.mixins.json')
+    }
+}
+
 minecraft {
     mappings channel: "official", version: rootProject.findProperty("minecraft_version")
     runs {
         configureEach {
+            environment "MOD_CLASSES", runModJar.flatMap { it.archiveFile }.get().asFile.absolutePath
             property "forge.logging.markers", "REGISTRIES"
             property "forge.logging.console.level", "debug"
             property "ignoreList", "bootstraplauncher,securejarhandler,asm-commons,asm-util,asm-analysis,asm-tree,asm,JarJarFileSystems,client-extra,fmlcore,javafmllanguage,lowcodelanguage,mclanguage,forge-"
@@ -16,6 +71,14 @@ minecraft {
             jvmArg "--add-opens=java.base/java.text=ALL-UNNAMED"
             jvmArg "--add-opens=java.desktop/java.awt=ALL-UNNAMED"
             jvmArg "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED"
+            // MTR ships an SRG-named jar with a searge refmap. ForgeGradle only wires these
+            // into the generated IntelliJ run config, so Gradle's runClient/runServer tasks
+            // launched mixin without them and every mtr.mixins.json accessor failed with
+            // "No candidates were found matching f_8927_:Z". createSrgToMcp is already in the
+            // run task graph, so the mapping file is generated before the game starts.
+            property "net.minecraftforge.gradle.GradleStart.srg.srg-mcp", "${project.layout.buildDirectory.get().asFile}/createSrgToMcp/output.srg"
+            property "mixin.env.remapRefMap", "true"
+            property "mixin.env.refMapRemappingFile", "${project.layout.buildDirectory.get().asFile}/createSrgToMcp/output.srg"
         }
         client {}
         server { args "--nogui" }
@@ -24,6 +87,11 @@ minecraft {
 
 jar {
     archiveClassifier = 'slim'
+    // Required on Forge 1.20.1: without this manifest attribute the released jar loads
+    // with none of the BTE mixins applied.
+    manifest {
+        attributes('MixinConfigs': 'bte.mixins.json')
+    }
 }
 
 jarJar.enable()
@@ -32,8 +100,20 @@ sourceSets.main.resources { srcDir "src/generated/resources" }
 
 dependencies {
     minecraft "net.minecraftforge:forge:${rootProject.findProperty("minecraft_version")}-${project.findProperty("forge_version_${rootProject.findProperty("minecraft_version")}")}"
+    // MTR mapping layer. fg.deobf is required: the published Forge jar uses SRG names,
+    // and without the transform its native bridge methods stay unmapped against the
+    // official-named Minecraft classpath (breaking BlockWithEntity#newBlockEntity,
+    // SliderWidgetExtension#applyValue and PressAction#onPress).
+    // Keep the readable version-string coordinate. The hashed one
+    // (maven.modrinth:XKPAmI6u:R05lh1Ys) is the same artifact, but ForgeGradle does
+    // not register it as a mod, so MTR is missing from the dev mod path and loading
+    // fails with "Mod bte requires mtr ... Currently, mtr is not installed".
     implementation fg.deobf("maven.modrinth:minecraft-transit-railway:FORGE-${rootProject.findProperty("mtr_version")}+${rootProject.findProperty("minecraft_version")}")
-    annotationProcessor 'systems.manifold:manifold-preprocessor:+'
+    annotationProcessor 'systems.manifold:manifold-preprocessor:2024.1.19'
+    // Reads @Mixin / @At / @Inject string literals out of the compiled sources and
+    // writes a refmap translating them to SRG names. Without it, Minecraft-targeting
+    // mixins (minecraft.CameraCantMixin) cannot work in a reobfuscated jar.
+    annotationProcessor "org.spongepowered:mixin:${project.findProperty("mixin_ap_version")}:processor"
 
     if(project.merged_mc_version_int >= 11802) {
         jarJar(group: 'folk.sisby', name: 'kaleido-config', version: "[0.3.3,1.0)")
@@ -43,22 +123,9 @@ dependencies {
     }
 }
 
-// Copy mods.toml into classes dir so Forge finds both declaration and @Mod class in one mod file
-tasks.register('prepareModClasses') {
-    dependsOn processResources, compileJava
-    doLast {
-        copy {
-            from 'build/resources/main/META-INF/mods.toml'
-            into 'build/classes/java/main/META-INF'
-        }
-        // Remove from resources dir so Forge sees only one mod file entry
-        delete 'build/resources/main/META-INF/mods.toml'
-    }
-}
-tasks.named('classes') { dependsOn('prepareModClasses') }
 afterEvaluate {
     tasks.matching { it.name in ['prepareRunClientCompile', 'prepareRunServerCompile'] }.configureEach {
-        dependsOn('prepareModClasses')
+        dependsOn(runModJar)
     }
 }
 
@@ -68,6 +135,41 @@ java {
     }
     withSourcesJar()
 }
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.compilerArgs += [
+            "-Xplugin:Manifold",
+            "-AMC_VERSION=${project.merged_mc_version_int}",
+            "-ALOADER=${project.properties.loader_name}",
+            "-AoutRefMapFile=${mixinRefmapFile.get().asFile.absolutePath}",
+            "-AmappingTypes=tsrg",
+            "-AreobfTsrgFile=${mixinMappingsFile.get().asFile.absolutePath}",
+            "-AdefaultObfuscationEnv=searge",
+            // The AP validates @At/@Redirect targets through javac's element model,
+            // which does not expose synthetic lambda methods read from a binary
+            // classpath entry. RenderRailsCantMixin targets MTR's
+            // lambda$renderRailStandard$16 / $18, which do exist (verified in the MTR
+            // jar) and do apply at runtime, but javac cannot see them and the AP
+            // aborts the build. Runtime "defaultRequire": 1 still enforces them.
+            "-AdisableTargetValidator=true"
+    ]
+    // The mapping file the Mixin AP consumes is generated by ForgeGradle.
+    dependsOn('createMcpToSrg')
+    // Track the refmap as a real output so deleting it re-triggers compilation
+    // instead of silently shipping a jar with a dangling "refmap" field.
+    it.outputs.file(mixinRefmapFile)
+    it.doFirst {
+        mixinRefmapFile.get().asFile.parentFile.mkdirs()
+    }
+    println "=== JavaCompile task: ${it.name} ==="
+    println "Compiler args: ${it.options.compilerArgs}"
+}
+
+// jar -> reobfJar -> jarJar, and shadowJar -> reobfShadowJar -> jarJar, so both
+// cover the published artifact (duplicatesStrategy = EXCLUDE handles the overlap).
+// runModJar is the dev-run classpath entry, which keeps the dev environment on the
+// same refmap code path a real installation uses.
+[jar, shadowJar].each { t -> t.from(mixinRefmapFile) }
 
 shadowJar {
     archiveClassifier = 'shadowed'

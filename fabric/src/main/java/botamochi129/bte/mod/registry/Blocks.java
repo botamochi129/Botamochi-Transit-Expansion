@@ -14,14 +14,14 @@ import java.util.function.Supplier;
 public class Blocks {
 
     // 【修正】カスタムファクトリを使用して StraightNodeItem を登録する
-    public static final BlockRegistryObject STRAIGHT_NODE = BTERegistry.registerBlockWithBlockItem(
+    public static BlockRegistryObject STRAIGHT_NODE = BTERegistry.registerBlockWithBlockItem(
             "straight_node",
             () -> new Block(new StraightNodeBlock()),
             StraightNodeItem::new, // ← ここを追加
             ItemGroups.MAIN
     );
 
-    public static final BlockEntityTypeRegistryObject<StraightNodeBlockEntity> STRAIGHT_NODE_BE =
+    public static BlockEntityTypeRegistryObject<StraightNodeBlockEntity> STRAIGHT_NODE_BE =
             BTERegistry.registerBlockEntityType(
                     "straight_node",
                     StraightNodeBlockEntity::new,
