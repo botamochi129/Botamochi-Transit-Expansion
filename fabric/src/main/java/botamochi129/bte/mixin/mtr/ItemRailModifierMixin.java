@@ -12,6 +12,7 @@ import org.mtr.mapping.holder.BlockPos;
 import org.mtr.mapping.holder.BlockState;
 import org.mtr.mapping.holder.ClientWorld;
 import org.mtr.mapping.holder.MinecraftClient;
+import org.mtr.mod.Init;
 import org.mtr.mod.block.BlockNode;
 import org.mtr.mod.item.ItemRailModifier;
 import org.spongepowered.asm.mixin.Mixin;
@@ -88,14 +89,42 @@ public abstract class ItemRailModifierMixin {
             nodeEndDeg = reverseGeo;
         }
 
-        Vector startVec = new Vector(x1 + 0.5 + offX1, y1 + offY1, z1 + 0.5 + offZ1);
-        Vector endVec = new Vector(x2 + 0.5 + offX2, y2 + offY2, z2 + 0.5 + offZ2);
+        // ★ +0.5 は付けない（MTR の getPositionXZ が x,z に +0.5 を加算するため）。
+        Vector startVec = new Vector(x1 + offX1, y1 + offY1, z1 + offZ1);
+        Vector endVec = new Vector(x2 + offX2, y2 + offY2, z2 + offZ2);
+
+        final double startRad = Math.toRadians(nodeStartDeg);
+        final double endRad = Math.toRadians(nodeEndDeg);
+        final double verticalRadius = rail.railMath.getVerticalRadius();
+        final Rail.Shape shape = rail.railMath.getShape();
+
+        // ★ 描画されるのは createRail が返した Rail ではない。
+        //   RenderRails#renderRailStandard は 551 で createRail した直後 568 で
+        //   PacketUpdateLastRailStyles$Cache#getRailWithLastStyles を呼び、Rail.copy で
+        //   「新しい Rail + 新しい RailMath」を作って 575/583 でその方をレンダーリストへ積む。
+        //   Rail.copy は position1/angle1/position2/angle2 から RailMath を再構築するため、
+        //   ここで注入したフィールドは捨てられ、コピーだけが MTR 純正のブロック角度
+        //   ジオメトリで描画される（＝BTE のカスタム角度が無視されてモデルが崩れる）。
+        //   RailMathMixin#bte$capturePositions は RAIL_MATH_DATA_MAP を見るが、
+        //   プレビューのノード対はまだ配置済みではないので同 Map に載っていない。
+        //   そこで 1 枠だけ公開し、Rail.copy が生成する RailMath の <init> から回収させる。
+        //   寿命は 1 フレーム（RenderRailsMixin#bte$patchRailsBeforeRender の冒頭でクリア）。
+        StraightNodeBlockEntity.setPreviewRailGeometry(new double[]{
+                startVec.x(), startVec.y(), startVec.z(),
+                endVec.x(), endVec.y(), endVec.z(),
+                startRad, endRad,
+                verticalRadius, shape.ordinal(),
+                (double) x1, (double) z1,
+                (double) x2, (double) z2,
+                (double) y1, (double) y2
+        });
 
         if (rail.railMath instanceof IRailMathExtra mathExtra) {
-            double verticalRadius = rail.railMath.getVerticalRadius();
+            // 順序は bte$enableBezier が MTR の正規順に揃える
             mathExtra.bte$enableBezier(
-                    startVec, Math.toRadians(nodeStartDeg), endVec, Math.toRadians(nodeEndDeg),
-                    verticalRadius, rail.railMath.getShape()
+                    Init.blockPosToPosition(p1), startVec, startRad,
+                    Init.blockPosToPosition(p2), endVec, endRad,
+                    verticalRadius, shape
             );
         }
     }

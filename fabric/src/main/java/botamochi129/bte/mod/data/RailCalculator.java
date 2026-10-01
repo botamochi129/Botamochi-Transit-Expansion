@@ -212,10 +212,15 @@ public class RailCalculator {
             Vec2 endRel = end.sub(center);
             double thetaEnd = Math.atan2(endRel.z, endRel.x);
 
+            // Do NOT fold deltaTheta into (-PI, PI]. That fold reflects the turn
+            // direction, so any arc needing more than 180 deg of turn became the
+            // mirrored arc: the path bulges the opposite way (up to 2r blocks off)
+            // while start point, end point and both tangents still match, so the
+            // error is invisible to endpoint checks. Long rails hit this because
+            // total turn = L / r * 180/PI exceeds 180 deg once L > PI * r.
+            // atan2 already yields thetaEnd - thetaStart in (-2PI, 2PI), which keeps
+            // the intended sign and magnitude.
             double deltaTheta = thetaEnd - thetaStart;
-            deltaTheta = (deltaTheta + Math.PI) % (2 * Math.PI);
-            if (deltaTheta < 0) deltaTheta += 2 * Math.PI;
-            deltaTheta -= Math.PI;
 
             double tStart = thetaStart * r;
             double tEnd = tStart + deltaTheta * r;

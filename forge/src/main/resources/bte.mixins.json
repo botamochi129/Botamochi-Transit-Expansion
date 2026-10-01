@@ -7,9 +7,10 @@
   "mixins": [
     "mtr.AngleMixin",
     "mtr.ItemNodeModifierBaseMixin",
-    "mtr.PathDataMixin",
     "mtr.PathDataSchemaAngleMixin",
     "mtr.RailAccessorMixin",
+    "mtr.RailCopyAnglesMixin",
+    "mtr.RailGetAnglesMixin",
     "mtr.RailMathMixin",
     "mtr.RailSchemaAngleMixin",
     "mtr.RailStartAngleMixin"
@@ -19,8 +20,10 @@
     "mtr.ItemRailModifierMixin",
     "mtr.RenderRailsNodeRotationMixin",
     "mtr.RenderRailsMixin",
+    "mtr.RenderRailsCantMixin",
     "mtr.RenderVehiclesCantMixin",
-    "mtr.RenderVehiclesConnectionCantMixin"
+    "mtr.RenderVehiclesConnectionCantMixin",
+    "mtr.RailWrapperMixin"
   ],
   "injectors": {
     "defaultRequire": 1

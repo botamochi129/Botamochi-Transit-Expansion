@@ -1,5 +1,6 @@
 package botamochi129.bte.mixin.mtr;
 
+import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
 import botamochi129.bte.mod.data.AngleExtra;
 import botamochi129.bte.mod.data.RailAngleOverride;
 import org.mtr.core.data.Position;
@@ -69,9 +70,55 @@ public abstract class RailStartAngleMixin implements RailAngleOverride {
         }
     }
 
+    /**
+     * 上書きが失われていたら {@link StraightNodeBlockEntity#RAIL_MATH_DATA_MAP} から復元する。
+     *
+     * <p><b>これが点滅の根治策。</b> MTR は自前のデータ保存で {@code Rail} 実体を作り直すため、
+     * {@link #bte$angleOverride1} / {@link #bte$angleOverride2} はそのたびに消える。
+     * 再生成から {@code StraightNodeBlockEntity#drain()}（最大 4 tick）までは上書きが無い状態で
+     * 経路探索が動き、<b>接続グラフが変わる</b>ため列車Assigned 経路が別物になって点滅 /
+     * 誤経路发生过。クライアント側は {@code RenderRailsMixin} が毎フレーム map を更新している
+     * ので、map から復元すれば常に最新かつ整合した値を得られる。
+     *
+     * <p>MTR の {@code SidingPathFinder} は {@code Angle} を <b>参照一致</b>で比較する
+     * （{@code if_acmpeq}）。角度は {@link AngleExtra#canonicalize} で 0.001 度単位に丸めてから
+     * キャッシュするので、同じ向きは必ず同一インスタンスが返り、参照一致が成立する。
+     */
+    @Unique
+    private void bte$restoreOverrideFromMap() {
+        final java.util.Map<String, double[]> map = StraightNodeBlockEntity.RAIL_MATH_DATA_MAP;
+        if (map.isEmpty()) return; // BTE が一切使われていないワールドでは何もしない
+
+        final Position p1 = getPosition1();
+        final Position p2 = getPosition2();
+        if (p1 == null || p2 == null) return;
+
+        final double[] d = map.get(StraightNodeBlockEntity.railMathKey(p1, p2));
+        if (d == null || d.length < 14) return;
+
+        // d[10..13] = publish 元ノードの端点座標, d[6] = その端の退出角, d[7] = 対向端の退出角
+        final long ax = (long) d[10];
+        final long az = (long) d[11];
+        final long bx = (long) d[12];
+        final long bz = (long) d[13];
+        final double angleA = Math.toDegrees(d[6]);
+        final double angleB = Math.toDegrees(d[7]);
+
+        if (p1.getX() == ax && p1.getZ() == az) {
+            this.bte$angleOverride1 = AngleExtra.fromDegrees(angleA);
+            this.bte$angleOverride2 = AngleExtra.fromDegrees(angleB);
+        } else if (p1.getX() == bx && p1.getZ() == bz) {
+            this.bte$angleOverride1 = AngleExtra.fromDegrees(angleB);
+            this.bte$angleOverride2 = AngleExtra.fromDegrees(angleA);
+        }
+    }
+
     @Inject(method = "getStartAngle(Lorg/mtr/core/data/Position;)Lorg/mtr/core/tool/Angle;", at = @At("HEAD"), cancellable = true)
     private void bte$getStartAngleByPosition(Position startPosition, CallbackInfoReturnable<Angle> cir) {
-        if (bte$angleOverride1 == null && bte$angleOverride2 == null) return;
+        if (bte$angleOverride1 == null && bte$angleOverride2 == null) {
+            bte$restoreOverrideFromMap();
+            if (bte$angleOverride1 == null && bte$angleOverride2 == null) return;
+        }
         if (startPosition.equals(getPosition1())) {
             if (bte$angleOverride1 != null) cir.setReturnValue(bte$angleOverride1);
         } else if (startPosition.equals(getPosition2())) {
@@ -81,7 +128,10 @@ public abstract class RailStartAngleMixin implements RailAngleOverride {
 
     @Inject(method = "getStartAngle(Z)Lorg/mtr/core/tool/Angle;", at = @At("HEAD"), cancellable = true)
     private void bte$getStartAngleByReversed(boolean reversed, CallbackInfoReturnable<Angle> cir) {
-        if (bte$angleOverride1 == null && bte$angleOverride2 == null) return;
+        if (bte$angleOverride1 == null && bte$angleOverride2 == null) {
+            bte$restoreOverrideFromMap();
+            if (bte$angleOverride1 == null && bte$angleOverride2 == null) return;
+        }
         final boolean reversePositions = getPosition1().compareTo(getPosition2()) > 0;
         final Angle override = (reversePositions == reversed) ? bte$angleOverride1 : bte$angleOverride2;
         if (override != null) cir.setReturnValue(override);

@@ -61,6 +61,10 @@ public class ArcCurve {
     private final Rail.Shape shape;
     private final boolean flat;
 
+    // MTR RailMath への注入用に、RailCalculator の生 Section を保持する。
+    private final RailCalculator.Section section1, section2;
+    private final boolean validGeometry;
+
     public ArcCurve(Vector posStart, double startAngleRad, Vector posEnd, double endAngleRad, double verticalRadius, Rail.Shape shape) {
         this.yStart = posStart.y();
         this.yEnd = posEnd.y();
@@ -90,45 +94,79 @@ public class ArcCurve {
             this.len2 = 0;
             this.reverse2 = false;
             this.totalLength = 0;
+            this.validGeometry = false;
+            this.section1 = null;
+            this.section2 = null;
         } else {
-            // ── 第 1 区間 ──────────────────────────────────────────
             RailCalculator.Section s1 = group.first;
+            RailCalculator.Section s2 = group.second;
+
             this.arc1 = s1.isValid() && !s1.isStraight && s1.r > EPSILON;
+            this.arc2 = s2.isValid() && !s2.isStraight && s2.r > EPSILON;
             this.reverse1 = s1.reverseT;
+            this.reverse2 = s2.reverseT;
             this.baseX1 = sx;
             this.baseZ1 = sz;
 
-            double midX = sx;
-            double midZ = sz;
+            // ================================================================
+            // 接合点 F（第 1 区間の終端 = 第 2 区間の始端）を先に 1 回だけ確定させる。
+            //
+            // RailCalculator.calculate が返す Group は 4 通りあり、F の求め方が各异になる:
+            //   直線のみ        : F = posEnd
+            //   直線 + 円弧     : F = 円弧の始端（第 2 区間のパラメータから厳密に復元）
+            //   円弧 + 直線     : F = 円弧 1 の終端
+            //   円弧 + 円弧     : F = 円弧 1 の終端（= 円弧 2 の始端）
+            //
+            // 「第 1 区間が直線ならレール全体を覆う」と仮定すると、円弧の終端を F と
+            // 取り違えて，接合点が posEnd に潰れ，続く len2 が 0 になって
+            // 円弧区間ごと消える（= カーブにならず、角度を変えても直線のまま）。
+            // よって必ず円弧のパラメータから復元する。
+            // ================================================================
+            final double fx;
+            final double fz;
+            if (arc1) {
+                // 円弧のパラメータは t = r * theta なので t / r がそのまま偏角。
+                final double thetaEnd1 = s1.tEnd * (1.0 / s1.r);
+                fx = s1.h + s1.r * Math.cos(thetaEnd1);
+                fz = s1.k + s1.r * Math.sin(thetaEnd1);
+            } else if (arc2) {
+                final double thetaStart2 = s2.tStart * (1.0 / s2.r);
+                fx = s2.h + s2.r * Math.cos(thetaStart2);
+                fz = s2.k + s2.r * Math.sin(thetaStart2);
+            } else {
+                fx = ex;
+                fz = ez;
+            }
+            this.baseX2 = fx;
+            this.baseZ2 = fz;
 
+            // ── 第 1 区間 ──────────────────────────────────────────────
             if (arc1) {
                 this.h1 = s1.h;
                 this.k1 = s1.k;
                 this.r1 = s1.r;
                 this.invR1 = 1.0 / s1.r;
                 this.thetaStart1 = s1.tStart * this.invR1;
-                // 円弧の t = r * theta なので |tEnd - tStart| がそのまま弧長になる
-                final double arcLen = Math.max(0, s1.getLength());
-                this.len1 = arcLen;
+                // 円弧は |tEnd - tStart| がそのまま弧長になる（t = r * theta のため）
+                this.len1 = Math.abs(s1.tEnd - s1.tStart);
                 // 開始点の実座標に厳密に合わせるための補正（コンストラクタで 1 回だけ）
                 this.corrX1 = sx - (s1.h + s1.r * Math.cos(thetaStart1));
                 this.corrZ1 = sz - (s1.k + s1.r * Math.sin(thetaStart1));
-                final double thetaEnd = thetaStart1 + (reverse1 ? -arcLen : arcLen) * invR1;
-                midX = h1 + r1 * Math.cos(thetaEnd) + corrX1;
-                midZ = k1 + r1 * Math.sin(thetaEnd) + corrZ1;
             } else {
-                // 直線: h,k は進行方向。ただし RailCalculator の既定 Section は (0,0) なので
+                // 直線: h,k は進行方向。RailCalculator の既定 Section は (0,0) なので
                 // 長さ 0 の「空区間」と区別する。
                 double dirX = s1.h;
                 double dirZ = s1.k;
                 double dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
                 if (dirLen < EPSILON) {
-                    // 方向が求まらない場合は端点差へ退避
-                    dirX = ex - sx;
-                    dirZ = ez - sz;
+                    // 方向が求まらない場合は接合点へ向かうベクトルへ退避
+                    dirX = fx - sx;
+                    dirZ = fz - sz;
                     dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
                     if (dirLen < EPSILON) {
-                        dirX = 1; dirZ = 0; dirLen = 1;
+                        dirX = 1;
+                        dirZ = 0;
+                        dirLen = 1;
                     }
                 }
                 this.h1 = dirX / dirLen;
@@ -138,43 +176,36 @@ public class ArcCurve {
                 this.thetaStart1 = 0;
                 this.corrX1 = 0;
                 this.corrZ1 = 0;
-
-                // 直線区間はレール全体を覆う（RailCalculator は直線を単独で返すため第 2 区間は空）
-                final double straightLen = Math.sqrt((ex - sx) * (ex - sx) + (ez - sz) * (ez - sz));
-                this.len1 = straightLen;
-                midX = sx + h1 * straightLen;
-                midZ = sz + k1 * straightLen;
+                // ★ 直線長は必ず物理座標距離を取る。
+                //   Section#getLength() = |tEnd - tStart| は直線では実長と一致しない
+                //   （MTR 本家と同じパラメータ化で、軸並行だと実長の 1/2 になる）。
+                this.len1 = Math.sqrt((fx - sx) * (fx - sx) + (fz - sz) * (fz - sz));
             }
 
-            // ── 第 2 区間 ──────────────────────────────────────────
-            RailCalculator.Section s2 = group.second;
-            this.arc2 = s2.isValid() && !s2.isStraight && s2.r > EPSILON;
-            this.reverse2 = s2.reverseT;
-            this.baseX2 = midX;
-            this.baseZ2 = midZ;
-
+            // ── 第 2 区間 ──────────────────────────────────────────────
             if (arc2) {
                 this.h2 = s2.h;
                 this.k2 = s2.k;
                 this.r2 = s2.r;
                 this.invR2 = 1.0 / s2.r;
                 this.thetaStart2 = s2.tStart * this.invR2;
-                this.corrX2 = midX - (s2.h + s2.r * Math.cos(thetaStart2));
-                this.corrZ2 = midZ - (s2.k + s2.r * Math.sin(thetaStart2));
-                this.len2 = Math.max(0, s2.getLength());
+                this.corrX2 = fx - (s2.h + s2.r * Math.cos(thetaStart2));
+                this.corrZ2 = fz - (s2.k + s2.r * Math.sin(thetaStart2));
+                this.len2 = Math.abs(s2.tEnd - s2.tStart);
             } else {
                 double dirX = s2.h;
                 double dirZ = s2.k;
                 double dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
                 if (dirLen < EPSILON) {
                     // 長さ 0 の空区間（RailCalculator.Group の既定値）
-                    this.h2 = 1; this.k2 = 0;
+                    this.h2 = 1;
+                    this.k2 = 0;
                     this.len2 = 0;
                 } else {
                     this.h2 = dirX / dirLen;
                     this.k2 = dirZ / dirLen;
-                    // 実長 = 第 1 区間の終端から posEnd までの距離
-                    this.len2 = Math.sqrt((ex - midX) * (ex - midX) + (ez - midZ) * (ez - midZ));
+                    // ★ ここも物理距離。getLength() は使わない。
+                    this.len2 = Math.sqrt((ex - fx) * (ex - fx) + (ez - fz) * (ez - fz));
                 }
                 this.r2 = 0;
                 this.invR2 = 0;
@@ -184,6 +215,9 @@ public class ArcCurve {
             }
 
             this.totalLength = this.len1 + this.len2;
+            this.validGeometry = true;
+            this.section1 = s1;
+            this.section2 = s2;
         }
 
         // ── 高低プロファイル（本家 getPositionY が getVTheta で先出し計算する量）──
@@ -203,6 +237,16 @@ public class ArcCurve {
 
     public double getLength() {
         return totalLength;
+    }
+
+    /**
+     * RailCalculator の幾何を MTR RailMath のフィールド表現へ変換する（変換レイヤー）。
+     *
+     * @return 変換結果。RailCalculator が有効な Group を返さなかった場合（平行・計算不能）は
+     *         {@code null}。呼び出し側はそのとき MTR 純正のままにして注入しない。
+     */
+    public MtrRailGeometry toMtrGeometry() {
+        return validGeometry ? MtrRailGeometry.from(section1, section2, yStart, yEnd) : null;
     }
 
     /** 高低を無視した平面位置。 */
