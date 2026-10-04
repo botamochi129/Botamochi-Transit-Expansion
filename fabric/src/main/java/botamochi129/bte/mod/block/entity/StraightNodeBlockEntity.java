@@ -463,13 +463,12 @@ public static void sweepNodeState() {
     // ★ なぜ「記録した軸の値」と照合して判定するのか（恒久フラグにしない理由）
 //   Rail.getAngles は Rail の構築時にしか呼ばれないので、一度 true になった端点対は
 //   Rail が再構築されるまで「構築されたまま」でしかありえない。
-//   しかし BTE ノードの軸は GUI で実行時に変更できる。軸を 22.5 度グリッドの外へ回すと、
-//   MTR が構築した RailMath は旧軸のままなのに台帳だけが true のままだと、
+//   しかし BTE ノードの軸は GUI で実行時に変更できる。軸を回転すると、
+// MTR が構築した RailMath は旧軸のままなのに台帳だけが true のままだと、
 //     RailMathMixin#bte$capturePositions と RenderRailsMixin が in-place 注入を
 //   両方スキップし、形状が更新されなくなる（再入場まで直らない症状の直接原因）。
 //   したがって「構築した瞬間」ではなく「現在のノード軸が記録と一致するか」で判定する。
-//   これならグリッド内→グリッド外、グリッド外→グリッド内、bind/unbind、
-//   offset の増減のすべてで判定が自動的に追随する。
+//   これなら軸の回転・offset の増減・bind/unbind のすべてで判定が自動的に追随する。
 //   TTL は設けない。時間窓ではなく「記録した入力が今も有効か」という理屈の判定だから。
 
 /**
@@ -520,8 +519,7 @@ public static boolean wasMarkedNativeRail(String key) {
  *
  * <p>「記録した BTE 軸が今もそのまま有効」であれば true。すなわち全端について
  * <ul>
- *   <li>BTE 端だったなら {@link #getNativeNodeAxis} が今も同じ軸を返す（offset が 0 で、
- *       軸が 22.5 度グリッド上にある）</li>
+ *   <li>BTE 端だったなら {@link #getNativeNodeAxis} が今も同じ軸を返す（offset が 0）</li>
  *   <li>MTR 標準ノード端だったなら今も BTE ノードになっていない</li>
  * </ul>
  * を満たすときだけ true を返す。ノード軸の回転・offset 変更・bind/unbind に自動追随し、
@@ -546,27 +544,27 @@ private static boolean bte$nativeEndStillValid(Position position, java.util.Map<
         // MTR 標準ノード端だったのが BTE ノードに置き換わった → 条件は崩れた
         return !nativeNow;
     }
-    // BTE 端だったのに現在ネイティブ扱いでなくなった（offset が 0 でなくなった／グリッド外に回した）
+    // BTE 端だったのに現在ネイティブ扱いでなくなった（offset が 0 でなくなった）
     if (!nativeNow) return false;
     return Math.abs(out[0] - recorded) <= 1e-6;
 }
 
     /**
-     * {@code Rail.getAngles} で BTE ノードの生軸をそのまま MTR に渡してよいか（＝軸が 22.5 度グリッド上であること）。
+     * {@code Rail.getAngles} で BTE ノードの生軸をそのまま MTR に渡してよいか
+     *（＝offset が全てゼロで、bound な BTE ノードか）。
      *
-     * <p><b>MTR の角度は 22.5 度刻みの 16 方向しかない。</b>{@code Angle} は
-     * {@code E, SEE, SE, SSE, S, SSW, SW, SWW, W, NWW, NW, NNW, N, NNE, NE, NEE} の
-     * 16 要素 enum で、{@code Angle.fromAngle(float)} は
-     * {@code values()[getQuadrant(a, true)]} として角度を<b>必ず 22.5 度刻みに丸める</b>。
-     * {@code RailMath} の公開コンストラクタも {@code (Position, Angle, Position, Angle, ...)}
-     * の 1 つしかなく、生の double を直接受け取る入口が無い。
+     * <p><b>角度の丸めを考えなくてよい理由</b><br>
+     * MTR の {@code Angle} は本来 16 要素の enum で、{@code Angle.fromAngle(float)} は
+     * 22.5 度刻みに必ず丸める。しかし BTE の {@code AngleMixin} は
+     * {@link botamochi129.bte.mod.data.AngleExtra#fromDegrees(double)} を通じて
+     * 16 要素に一致しない任意角度の phantom {@code Angle}（{@code ordinal = -1}、
+     * {@code angleDegrees} を厳密に保持、{@code angleRadians/sin/cos/tan/halfTan} も再計算）
+     * を生成できる。したがって<b>MTR のソルバには正確な自由角を直接渡せる</b>。
+     * 「MTR は丸めてしまう = 別のカーブになる」という理由でのグリッド判定は行わない。
      *
-     * <p>したがってノード軸が 22.5 度の倍数でなければ、{@code RailGetAnglesMixin} が
-     * 軸を差し替えても MTR は丸めた値で {@code RailMath} を構築する。その場合
-     * MTR の内部形状は BTE の {@link botamochi129.bte.mod.data.ArcCurve}
-     * （丸めなしの正確な軸から計算）とは<b>別のカーブ</b>になり、
-     * 「どれか一方だけ別のカーブを走る」状態になる。よってグリッド外の軸は
-     * MTR のネイティブ経路に乗せず、BTE の in-place 注入に一本化する。
+     * <p>残る制約は offset のみ。{@code RailMath} の端点座標は {@code Position}（整数）であり
+     * {@code double} を受け取る公開入口が無いので、小数座標だけは MTR ネイティブに載せられない。
+     * そのため offset が非ゼロの端は MTR 本家の値に任せ、BTE の in-place 注入に一本化する。
      */
     public static boolean getNativeNodeAxis(BlockPos pos, double[] out) {
         if (pos == null || out == null || out.length < 4) return false;
@@ -574,8 +572,6 @@ private static boolean bte$nativeEndStillValid(Position position, java.util.Map<
         final double[] v = NODE_STATE.get(k);
         if (v == null || v.length < 5 || v[4] == 0) return false;
         if (v[1] != 0.0 || v[2] != 0.0 || v[3] != 0.0) return false;
-        // ★ 軸が 22.5 度グリッド上でなければ MTR は丸めてしまう = 別のカーブになる
-        if (!isOnMtrAngleGrid(v[0])) return false;
         out[0] = v[0];
         out[1] = v[1];
         out[2] = v[2];
@@ -584,11 +580,42 @@ private static boolean bte$nativeEndStillValid(Position position, java.util.Map<
         return true;
     }
 
-    /** MTR の {@code Angle} が表現できる角度（22.5 度の倍数）か。 */
-    public static boolean isOnMtrAngleGrid(double degrees) {
-        if (!Double.isFinite(degrees)) return false;
-        final double q = degrees / 22.5D;
-        return Math.abs(q - Math.rint(q)) <= 1e-6;
+    /**
+     * このブロック位置に bound な BTE ノードの状態が記録されているか。
+     *
+     * <p>{@code NODE_STATE} だけを参照するので世界照会も BE 取得もせず、
+     * 描画 pass の入口で「この端点が BTE ノードか」をキー参照 1 回で判定できる。
+     * クライアント側のブートストラップ判定に使う。
+     */
+public static boolean hasNodeState(BlockPos pos) {
+        if (pos == null) return false;
+        final double[] v = NODE_STATE.get(packNodeKey(pos.getX(), pos.getY(), pos.getZ()));
+        return v != null && v.length >= 5 && v[4] != 0;
+    }
+
+    /**
+     * この BE の現在の角度/offset を {@link #NODE_STATE} へ公開する。
+     * bound でなければ記録を破棄する（unbind 済みノードの形状を残さないため）。
+     *
+     * <p>{@link #readCompoundTag} から呼ぶ。クライアントは {@code Rail} を
+     * 逆シリアライズして得るだけで {@code Rail.getAngles} を通らないため、
+     * {@code RailGetAnglesMixin} による公開では {@code NODE_STATE} が埋まらない。
+     * NBT 同期が両側で確実に届く経路なので、読み込み直後にここで公開し直す。
+     */
+    public void publishNodeState() {
+        if (!isBound()) {
+            invalidateNodeState(getPos2());
+            return;
+        }
+        cacheNodeState(getPos2(), angleDegrees, offsetX, offsetY, offsetZ);
+    }
+
+    /** 指定位置の {@link #NODE_STATE} を破棄する（unbind・ブロック除去に追随させる）。 */
+    public static void invalidateNodeState(BlockPos pos) {
+        if (pos == null) return;
+        final long k = packNodeKey(pos.getX(), pos.getY(), pos.getZ());
+        NODE_STATE.remove(k);
+        NODE_STATE_LAST_SEEN.remove(k);
     }
 
     /**
@@ -969,6 +996,21 @@ private static boolean bte$nativeEndStillValid(Position position, java.util.Map<
         } else {
             offsetX = offsetY = offsetZ = 0.0;
         }
+
+// ★ 角度/offset を NODE_STATE へ公開する（サーバ・クライアント共通）。
+        //
+        // これがマルチプレイでライブ更新を成立させる鍵：
+        //   角度変更 → bind() → syncBlockEntity() → NBT パケット → クライアントの
+        //   readCompoundTag → ここで publishNodeState() → NODE_STATE 更新 →
+        //   RenderRailsMixin が次フレームで注入する。
+        //
+        // クライアントは Rail を逆シリアライズして得られるだけで Rail.getAngles を
+        // 呼ばないため、RailGetAnglesMixin / markNativeRail がクライアントでは一度も
+        // 走らない。結果として NODE_STATE も NATIVE_RAILS も空のままで、
+        // 「BTE が関与しているか」を描画 pass の入口で判定できず注入が起動しない。
+        // NBT は同期経路として確実に届くので（カントがクライアントで反映されるのが証拠）、
+        // ここで自前に公開する。
+        publishNodeState();
 
         speedLimitOriginals.clear();
         if (tag.contains(KEY_SPEED_ORIGINALS)) {

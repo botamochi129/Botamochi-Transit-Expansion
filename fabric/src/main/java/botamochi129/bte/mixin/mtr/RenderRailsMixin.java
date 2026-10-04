@@ -78,13 +78,21 @@ public abstract class RenderRailsMixin {
                 // MTR 標準ノード端の退出角の供給に共用する。
                 double[] existing = StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.get(railKey);
 
-                // ★ 入口の短絡。BTE が一度も触れていないレール（標準ノードだけの線路）は
-                //   世界照会も注入判定も要らないので、ここで弾く。旧実装は native 判定を
-                //   ここに置いていたが、native 判定は NODE_STATE を参照するため
-                //   NODE_STATE が未投入の直後（参加直後・チャンク退出時）には必ず false となり、
-                //   「MTR 純正のまま使う」安全側の既定が崩れて BTE を注入していた。
-                //   キー参照 2 回だけで済み、world.getBlockEntity も呼ばない。
-                if (existing == null && !StraightNodeBlockEntity.wasMarkedNativeRail(railKey)) return;
+                // ★ 入口の短絡。BTE が関与していないレール（標準ノードだけの線路）は
+                //   世界照会も注入判定も要らないので、ここで弾く。
+                //   判定材料は「どちらの端も BTE ノードとして未知か」だけで、
+                //   NODE_STATE のキー参照 2 回で済み world.getBlockEntity も呼ばない。
+                //
+                //   ★ 旧実装（existing / wasMarkedNativeRail のみを見る版）は
+                //     マルチプレイで必ず注入が起動しなかった。クライアントは Rail を
+                //     逆シリアライズして得るだけで Rail.getAngles を通らないため、
+                //     NATIVE_RAILS も RAIL_MATH_DATA_MAP も空のままでbootstrapできず、
+                //     一度 short-circuit した後は何も登録されないままだった。
+                //     NODE_STATE は readCompoundTag#publishNodeState が NBT 経由で公開
+                //     するので、この短絡で弾かれることは無い。
+                if (!StraightNodeBlockEntity.hasNodeState(p1)
+                        && !StraightNodeBlockEntity.hasNodeState(p2)
+                        && !StraightNodeBlockEntity.wasMarkedNativeRail(railKey)) return;
 
                 // ★ 端ごとの解決: ライブな BE を優先し、無ければノード状態キャッシュを使う ──
                 //   チャンクのロード範囲はプレイヤー中心なので、長いレールの端が範囲外に出ると

@@ -1,6 +1,7 @@
 package botamochi129.bte.mixin.mtr;
 
 import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
+import botamochi129.bte.mod.data.AngleExtra;
 import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
 import org.mtr.core.data.TransportMode;
@@ -91,7 +92,7 @@ public abstract class RailCopyAnglesMixin {
                 otherPos.getX() - selfPos.getX()
         ));
 
-        return Angle.fromAngle(axis + (Angle.similarFacing(axis, geo) ? 0f : 180f));
+        return AngleExtra.fromDegrees(axis + (Angle.similarFacing(axis, geo) ? 0f : 180f));
     }
 
     /**

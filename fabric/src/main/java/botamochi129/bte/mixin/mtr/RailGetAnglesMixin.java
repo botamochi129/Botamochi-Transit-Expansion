@@ -1,6 +1,7 @@
 package botamochi129.bte.mixin.mtr;
 
 import botamochi129.bte.mod.block.entity.StraightNodeBlockEntity;
+import botamochi129.bte.mod.data.AngleExtra;
 import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
 import org.mtr.core.tool.Angle;
@@ -26,6 +27,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  *     Angle.fromAngle(a2 + (Angle.similarFacing(a2, geo) ? 180 :   0))
  * );
  * </pre>
+ *
+ * <p><b>本家との差分は {@code Angle.fromAngle} → {@link AngleExtra#fromDegrees} だけ</b><br>
+ * {@code Angle.fromAngle} は 22.5 度刻みの 16 要素 enum へ必ず丸めるため、
+ * これをそのまま使うと MTR は<b>丸めた</b>角度から {@code RailMath} を構築し、
+ * BTE の意図した角度と<b>別のカーブ</b>になる。
+ * {@link AngleExtra#fromDegrees} は 16 要素に一致すれば実値を返し、
+ * 一致しなければ任意角度の phantom {@code Angle}（{@code ordinal = -1}、角度は厳密に保持）
+ * を生成して返すので、<b>MTR 本家のソルバに自由角をそのまま渡せる</b>。
+ * 角度の丸め<b>以外</b>の MTR の曲線アルゴリズムには一切触れていない。
+ * phantom は {@code AngleMixin} が {@code getOpposite}/{@code isParallel}/{@code add}/
+ * {@code sub}/{@code getClosest45} をパッチ済みで、{@code EnumHelperRecovery} により
+ * 保存・ロード・パケット同期の往復でも消えない。
  *
  * <p><b>両端は完全に独立している</b><br>
  * 上式を逆アセンブルすると、返り値の前半は {@code a1} と {@code geo} のみを、
@@ -89,8 +102,8 @@ public abstract class RailGetAnglesMixin {
         ));
 
         cir.setReturnValue(new ObjectObjectImmutablePair<>(
-                Angle.fromAngle(axis1 + (Angle.similarFacing(axis1, geo) ? 0f : 180f)),
-                Angle.fromAngle(axis2 + (Angle.similarFacing(axis2, geo) ? 180f : 0f))
+                AngleExtra.fromDegrees(axis1 + (Angle.similarFacing(axis1, geo) ? 0f : 180f)),
+                AngleExtra.fromDegrees(axis2 + (Angle.similarFacing(axis2, geo) ? 180f : 0f))
         ));
 
         // BTE 端を1つでも差し替えたので、この端点対は MTR 自身が正しく構築する。
