@@ -6,6 +6,7 @@ import botamochi129.bte.mod.data.RailAngleOverride;
 import org.mtr.core.data.Position;
 import org.mtr.core.data.Rail;
 import org.mtr.core.tool.Angle;
+import org.mtr.mod.Init;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -93,24 +94,16 @@ public abstract class RailStartAngleMixin implements RailAngleOverride {
         final Position p2 = getPosition2();
         if (p1 == null || p2 == null) return;
 
-        final double[] d = map.get(StraightNodeBlockEntity.railMathKey(p1, p2));
-        if (d == null || d.length < 14) return;
+        // d[10..13] = publish 元ノードの端点座標で向きを判定し、要求順へ読み替える。
+        final double[] rad = new double[2];
+        if (!StraightNodeBlockEntity.getCachedExitAngles(
+                StraightNodeBlockEntity.railMathKey(p1, p2),
+                Init.positionToBlockPos(p1),
+                Init.positionToBlockPos(p2),
+                rad)) return;
 
-        // d[10..13] = publish 元ノードの端点座標, d[6] = その端の退出角, d[7] = 対向端の退出角
-        final long ax = (long) d[10];
-        final long az = (long) d[11];
-        final long bx = (long) d[12];
-        final long bz = (long) d[13];
-        final double angleA = Math.toDegrees(d[6]);
-        final double angleB = Math.toDegrees(d[7]);
-
-        if (p1.getX() == ax && p1.getZ() == az) {
-            this.bte$angleOverride1 = AngleExtra.fromDegrees(angleA);
-            this.bte$angleOverride2 = AngleExtra.fromDegrees(angleB);
-        } else if (p1.getX() == bx && p1.getZ() == bz) {
-            this.bte$angleOverride1 = AngleExtra.fromDegrees(angleB);
-            this.bte$angleOverride2 = AngleExtra.fromDegrees(angleA);
-        }
+        this.bte$angleOverride1 = AngleExtra.fromDegrees(Math.toDegrees(rad[0]));
+        this.bte$angleOverride2 = AngleExtra.fromDegrees(Math.toDegrees(rad[1]));
     }
 
     @Inject(method = "getStartAngle(Lorg/mtr/core/data/Position;)Lorg/mtr/core/tool/Angle;", at = @At("HEAD"), cancellable = true)

@@ -11,7 +11,6 @@ import org.mtr.mapping.holder.BlockPos;
 import org.mtr.mapping.holder.ClientWorld;
 import org.mtr.mapping.holder.MinecraftClient;
 import org.mtr.mod.Init;
-import org.mtr.mod.block.BlockNode;
 import org.mtr.mod.client.MinecraftClientData;
 import org.mtr.mod.render.RenderRails;
 import org.spongepowered.asm.mixin.Mixin;
@@ -59,25 +58,54 @@ public abstract class RenderRailsMixin {
                 BlockPos p1 = Init.positionToBlockPos(pos1);
                 BlockPos p2 = Init.positionToBlockPos(pos2);
 
-                // ── 端ごとの解決: ライブな BE を優先し、無ければノード状態キャッシュを使う ──
-                // ★ チャンクのロード範囲はプレイヤー中心なので、長いレールの端が範囲外に出ると
-                //   ClientWorld#getBlockEntity が null を返す。旧実装はここで即 MTR 標準軸へ
-                //   フォールバックしていたため、同じレールが「プレイヤーの位置によって別の曲線」
-                //   で描画されていた（ノード付近では正しく、真ん中に歩くと軌道が変わる）。
-                //   解決順を「live → cached」にし、どちらも無い端だけを MTR 標準軸へ倒す。
-                BlockEntity be1 = world.getBlockEntity(p1);
-                BlockEntity be2 = world.getBlockEntity(p2);
-
-                // ★ MTR ネイティブ解決済みのレールは in-place 注入しない。
+// ★ MTR ネイティブ解決済みのレールは in-place 注入しない。判定は下段で行う。
                 //   RailGetAnglesMixin が Rail.getAngles の引数を差し替えた結果、
                 //   MTR が RailMath の final（h1/k1/r1/.../minX..maxZ）を正しく焼き込んでいる。
                 //   ここで注入するとその正しい値を上書きし直し、
                 //   RailWrapper の遮蔽カリング AABB や closeTo の導出元が乖離して
                 //   位置依存の描画の揺れが復活する。
+                //
+                //   ただしこれは恒久フラグではない。ノード軸が 22.5 度グリッドの外にある、
+                //   あるいはサブブロック offset が 0 でなくなった瞬間に false へ落ち、
+                //   毎フレームの判定がそのまま BTE の注入経路へ入る。
+                //   （昔はこの判定が「一度 true れると二度と false に戻らない」ため、
+                //   ノード軸を回しても形が更新されず再入場まで直らなかった。）
                 final String railKey = StraightNodeBlockEntity.railMathKey(
                         p1.getX(), p1.getY(), p1.getZ(), p2.getX(), p2.getY(), p2.getZ()
                 );
-                if (StraightNodeBlockEntity.isNativeRail(railKey)) return;
+
+                // 既に publish 済みの記述子。bte$enableBezier の条件判定と
+                // MTR 標準ノード端の退出角の供給に共用する。
+                double[] existing = StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.get(railKey);
+
+                // ★ 入口の短絡。BTE が一度も触れていないレール（標準ノードだけの線路）は
+                //   世界照会も注入判定も要らないので、ここで弾く。旧実装は native 判定を
+                //   ここに置いていたが、native 判定は NODE_STATE を参照するため
+                //   NODE_STATE が未投入の直後（参加直後・チャンク退出時）には必ず false となり、
+                //   「MTR 純正のまま使う」安全側の既定が崩れて BTE を注入していた。
+                //   キー参照 2 回だけで済み、world.getBlockEntity も呼ばない。
+                if (existing == null && !StraightNodeBlockEntity.wasMarkedNativeRail(railKey)) return;
+
+                // ★ 端ごとの解決: ライブな BE を優先し、無ければノード状態キャッシュを使う ──
+                //   チャンクのロード範囲はプレイヤー中心なので、長いレールの端が範囲外に出ると
+                //   ClientWorld#getBlockEntity が null を返す。旧実装はここで即 MTR 標準軸へ
+                //   フォールバックしていたため、同じレールが「プレイヤーの位置によって別の曲線」
+                //   で描画されていた（ノード付近では正しく、真ん中に歩くと軌道が変わる）。
+                //   解決順を「live → cached」にし、どちらも無い端だけを MTR 標準軸へ倒す。
+                //
+                //   ★ ただし positionsToRail は描画距離で絞っていない（MinecraftClientData.sync() が
+                //     全レールを積む）ため、範囲外のレールでもこの反復は走る。
+                //     MTR の ClientWorld#getBlockEntity は ClientChunkManager#getChunk が
+                //     null を返すと NPE になるので、未ロード_chunk を見分ける必要がある。
+                //     ここでは「例外 = live ではない」とみなして保存値へ落とすだけでよい。
+                BlockEntity be1 = null;
+                BlockEntity be2 = null;
+                try {
+                    be1 = world.getBlockEntity(p1);
+                    be2 = world.getBlockEntity(p2);
+                } catch (RuntimeException ignored) {
+                    // チャンクマップ半径外。live 解決は諦め、キャッシュ経路へフォールバックする
+                }
 
                 StraightNodeBlockEntity sn1 = (be1 != null && be1.data instanceof StraightNodeBlockEntity s) ? s : null;
                 StraightNodeBlockEntity sn2 = (be2 != null && be2.data instanceof StraightNodeBlockEntity s) ? s : null;
@@ -111,22 +139,34 @@ public abstract class RenderRailsMixin {
                 final boolean bound2 = st2[4] != 0;
                 if (!bound1 && !bound2) return;
 
+                // ★ ネイティブ判定は「ここ」で行う。
+                //   isNativeRail は現在のノード軸（NODE_STATE）を参照するので、
+                //   live/cache の解決（上の cacheNodeState）を済ませてから問う必要がある。
+                //   先に判定すると NODE_STATE が未投入の直後に必ず false となり、
+                //   MTR 純正で正しいレールまで BTE の曲線を上書きしてしまう。
+                if (StraightNodeBlockEntity.isNativeRail(pos1, pos2)) return;
+
                 double geo = Math.toDegrees(Math.atan2(p2.getZ() - p1.getZ(), p2.getX() - p1.getX()));
                 double reverseGeo = Math.toDegrees(Math.atan2(p1.getZ() - p2.getZ(), p1.getX() - p2.getX()));
 
-                // ★ 標準ノード端の軸は MTR のブロック状態から独立に取る。
-                //   rail.getStartAngle() は RailStartAngleMixin により BTE の上書き自体を
-                //   返すため、それを使うと
-                //     RAIL_MATH_DATA_MAP → getStartAngle → 軸 → RAIL_MATH_DATA_MAP
-                //   という自己参照になり、クライアントが毎フレーム書き込む値と
-                //   サーバが 4 tick 周期で書く BlockNode.getAngle() ベースの値が
-                //   振動する。シングルプレイでは同一 JVM の static map を共有するため
-                //   これがそのまま角度のフラつき・経路の不安定になる。
-                final double mtrAxis1 = BlockNode.getAngle(world.getBlockState(p1));
-                final double mtrAxis2 = BlockNode.getAngle(world.getBlockState(p2));
+                // ★ MTR 標準ノード端の退出角は world から取らない。
+                //   ClientWorld#getBlockState はチャンクマップ半径外で air を返すため
+                //   BlockNode.getAngle が 90 度（＝MTR 純正の直線）になり、
+                //   プレイヤー位置で同じレールの曲線が変わっていた。
+                //   正しい値は既にサーバの updateBezierDataOnly() が chooseBestExit まで適用して
+                //   RAIL_MATH_DATA_MAP へ publish 済みなので、その保存値を端点組の向きに合わせて読み戻す。
+                final double[] cachedExit = new double[2];
+                final boolean hasCachedExit = StraightNodeBlockEntity.getCachedExitAngles(railKey, p1, p2, cachedExit);
+                // 保存値が無い（参加直後 / sweep 後の再 publish 待ち）なら、90 度で書かず
+                // MTR 純正のまま待つ。publish は最大 REFRESH_INTERVAL(4 tick) で届く。
+                if ((!bound1 || !bound2) && !hasCachedExit) return;
 
-                double startRad = Math.toRadians(NodeGeometry.chooseBestExit(bound1 ? st1[0] : mtrAxis1, geo));
-                double endRad = Math.toRadians(NodeGeometry.chooseBestExit(bound2 ? st2[0] : mtrAxis2, reverseGeo));
+                final double startRad = bound1
+                        ? Math.toRadians(NodeGeometry.chooseBestExit(st1[0], geo))
+                        : cachedExit[0];
+                final double endRad = bound2
+                        ? Math.toRadians(NodeGeometry.chooseBestExit(st2[0], reverseGeo))
+                        : cachedExit[1];
 
                 final double offX1 = bound1 ? st1[1] : 0;
                 final double offY1 = bound1 ? st1[2] : 0;
@@ -146,14 +186,11 @@ public abstract class RenderRailsMixin {
                 Vector startVec = new Vector(p1.getX() + offX1, p1.getY() + offY1, p1.getZ() + offZ1);
                 Vector endVec = new Vector(p2.getX() + offX2, p2.getY() + offY2, p2.getZ() + offZ2);
 
-                String key = StraightNodeBlockEntity.railMathKey(
-                        p1.getX(), p1.getY(), p1.getZ(), p2.getX(), p2.getY(), p2.getZ()
-                );
-                if (sweeping) StraightNodeBlockEntity.markLiveRailMath(key);
+                if (sweeping) StraightNodeBlockEntity.markLiveRailMath(railKey);
 
                 // ★ 差分書き込み: 既に同じ値が入っていれば double[14] と Map を触らない。
                 //   毎フレーム new していた分を、値が動いたときだけにする。
-                double[] existing = StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.get(key);
+                //   existing は上で退出角の供給にも使った同じ参照。
                 final boolean dataChanged = (existing == null || existing.length < 14
                         || existing[0] != startVec.x() || existing[1] != startVec.y() || existing[2] != startVec.z()
                         || existing[3] != endVec.x() || existing[4] != endVec.y() || existing[5] != endVec.z()
@@ -162,7 +199,7 @@ public abstract class RenderRailsMixin {
                         || existing[10] != p1.getX() || existing[11] != p1.getZ()
                         || existing[12] != p2.getX() || existing[13] != p2.getZ());
                 if (dataChanged) {
-                    StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.put(key, new double[]{
+                    StraightNodeBlockEntity.RAIL_MATH_DATA_MAP.put(railKey, new double[]{
                             startVec.x(), startVec.y(), startVec.z(),
                             endVec.x(), endVec.y(), endVec.z(),
                             startRad, endRad,

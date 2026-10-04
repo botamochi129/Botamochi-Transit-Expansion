@@ -132,7 +132,10 @@ public abstract class RailMathMixin implements IRailMathExtra {
         //      ここで注入するとその値を上書きし直し、MTR の不変条件
         //      「final は構築時のみ。変えたければ Rail を作り直す」を破って
         //      導出キャッシュ（RailWrapper の AABB、closeTo、経路探索）が中途半端に古くなる。
-        if (StraightNodeBlockEntity.isNativeRail(StraightNodeBlockEntity.railMathKey(position1, position2))) {
+        //
+        //      ネイティブ扱いは「記録した軸が今も 22.5 度グリッド上で offset が 0」のときだけ
+        //      成立する。ノード軸をグリッド外へ回した瞬間に false へ落ち、この注入経路へ入る。
+        if (StraightNodeBlockEntity.isNativeRail(position1, position2)) {
             bte$diagPath("native", position1, position2);
             return;
         }

@@ -289,6 +289,46 @@ public class StraightNodeBlockEntity extends BlockEntityExtension {
     }
 
     /**
+     * {@link #RAIL_MATH_DATA_MAP} に publish 済みの<b>退出角</b>を端点組の向きiguouslyに読み出す。
+     *
+     * <p>{@code double[14]} の {@code d[6]}/{@code d[7]} は publish した側の
+     * {@code p1/p2} 順で入っており、MTR が {@code Rail} の端点を入れ替えると
+     * どちらの端か入れ替わる（{@code RailMathMixin#bte$injectDescriptor} が
+     * {@code d[10],d[11]} で向きを判定している理由がこれ）。
+     * よって要求された {@code p1}/{@code p2} の順へ読み替える必要がある。
+     *
+     * <p>これは<b>チャンクロード状態に依存しない</b>唯一の MTR 標準ノード端の角度供給源。
+     * クライアントが {@code ClientWorld#getBlockState} から {@code BlockNode.getAngle} を
+     * 求めると、チャンクマップ半径外では air が返り 90 度（＝直線）になり、
+     * プレイヤー位置で形状が変わる。
+     *
+     * @param outRad 長さ 2。{@code outRad[0]} に p1 端、{@code outRad[1]} に p2 端の退出角（ラジアン）
+     * @return publish 済みの記述子があり向きも特定できたときだけ true
+     */
+    public static boolean getCachedExitAngles(String railKey, BlockPos p1, BlockPos p2, double[] outRad) {
+        if (railKey == null || p1 == null || p2 == null || outRad == null || outRad.length < 2) return false;
+        final double[] d = RAIL_MATH_DATA_MAP.get(railKey);
+        if (d == null || d.length < 14) return false;
+
+        final long ax = (long) d[10];
+        final long az = (long) d[11];
+        final long bx = (long) d[12];
+        final long bz = (long) d[13];
+
+        if (p1.getX() == ax && p1.getZ() == az && p2.getX() == bx && p2.getZ() == bz) {
+            outRad[0] = d[6];
+            outRad[1] = d[7];
+            return true;
+        }
+        if (p1.getX() == bx && p1.getZ() == bz && p2.getX() == ax && p2.getZ() == az) {
+            outRad[0] = d[7];
+            outRad[1] = d[6];
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * レールが現在も存在することを記録する（生存確認）。
      *
      * <p>呼び出し元は 2 箇所あり、どちらも描画距離に依存しない：
@@ -406,7 +446,7 @@ public static void sweepNodeState() {
         NATIVE_RAILS.clear();
     }
 
-    // ── MTR ネイティブ解決の台帳 ──────────────────────────────────
+// ── MTR ネイティブ解決の台帳 ──────────────────────────────────
     //
     // ★ MTR の不変条件
     //   MTR の RailMath は final フィールド（h1/k1/r1/tStart.../minX..maxZ/yStart/yEnd）を
@@ -420,47 +460,113 @@ public static void sweepNodeState() {
     //   こうすると minX..maxZ も RailWrapper の AABB も構造的に正しくなり、
     //   in-place 注入が要らなくなる。
     //
-    // ★ なぜ恒久フラグなのか（TTL を付けてはいけない理由）
-//   「この端点対はネイティブ構築されたか」は Rail 自身の不変的な属性であって、
-//   時間窓ではない。Rail.getAngles は Rail の構築時にしか呼ばれないので、
-//   一度 true になった端点対は再構築されるまで true のままのはずである。
-//   TTL を付けると、一定有期後に false へ戻り、
-//   in-place 注入が復活して MTR の正しい final を再び汚染し始める。
-//   それは「セッション開始直後は正しく、一定時間後に突然崩れる」という
-//   時間依存バグを新たに作ってしまう。期限は設けない。
+    // ★ なぜ「記録した軸の値」と照合して判定するのか（恒久フラグにしない理由）
+//   Rail.getAngles は Rail の構築時にしか呼ばれないので、一度 true になった端点対は
+//   Rail が再構築されるまで「構築されたまま」でしかありえない。
+//   しかし BTE ノードの軸は GUI で実行時に変更できる。軸を 22.5 度グリッドの外へ回すと、
+//   MTR が構築した RailMath は旧軸のままなのに台帳だけが true のままだと、
+//     RailMathMixin#bte$capturePositions と RenderRailsMixin が in-place 注入を
+//   両方スキップし、形状が更新されなくなる（再入場まで直らない症状の直接原因）。
+//   したがって「構築した瞬間」ではなく「現在のノード軸が記録と一致するか」で判定する。
+//   これならグリッド内→グリッド外、グリッド外→グリッド内、bind/unbind、
+//   offset の増減のすべてで判定が自動的に追随する。
+//   TTL は設けない。時間窓ではなく「記録した入力が今も有効か」という理屈の判定だから。
 
-/** ネイティブ解決済みの端点対（キー形式は {@link #railMathKey} と同一）。 */
-private static final java.util.Set<String> NATIVE_RAILS =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
+/**
+ * ネイティブ解決済みの端点対。
+ * キーは {@link #railMathKey} と同じ、値は
+ * 「{@code Rail.getAngles} に差し込んだ BTE 軸」を端点座標で引けるようにしたもの。
+ * BTE ノードでなかった端は値を持たない（＝MTR 本家の軸をそのまま通した端）。
+ */
+private static final java.util.Map<String, java.util.Map<Long, Double>> NATIVE_RAILS =
+        new java.util.concurrent.ConcurrentHashMap<>();
 
-/** この端点対が {@code Rail.getAngles} で BTE の軸角に差し替えられたことを記録する。 */
-public static void markNativeRail(String key) {
-    if (key != null) NATIVE_RAILS.add(key);
+/** {@code Position} を {@link #packNodeKey} と同じ規則で long に潰す。 */
+private static long packPosition(Position position) {
+    // Position#getX/getY/getZ は long を返すが、pack する添字は int 幅で十分な
+    // ブロック座標なので詰め替わる（連結は long 演算のままで桁あふれしない）。
+    return packNodeKey((int) position.getX(), (int) position.getY(), (int) position.getZ());
 }
 
 /**
- * この端点対がネイティブ解決済みか（＝ in-place 注入を無効化すべきか）。
+ * この端点対が {@code Rail.getAngles} で BTE の軸角に差し替えられたことを記録する。
  *
- * <p>有効期限は設けない。{@link #markNativeRail} は {@code Rail} の構築時にしか
- * 呼ばれないため、フラグは {@link #clearNodeState}（ワールド切替・サーバ再生成）
- * で消えるまで、その端点対がネイティブ構築された事実を保持する。
+ * @param key    {@link #railMathKey} と同じ端点対キー
+ * @param axis1  {@code position1} 端の BTE 軸。MTR 標準ノードの端なら null
+ * @param axis2  {@code position2} 端の BTE 軸。MTR 標準ノードの端なら null
  */
-public static boolean isNativeRail(String key) {
-    return key != null && NATIVE_RAILS.contains(key);
+public static void markNativeRail(String key, Position position1, Position position2,
+                                 Float axis1, Float axis2) {
+    if (key == null || position1 == null || position2 == null) return;
+    final java.util.Map<Long, Double> axes = new java.util.HashMap<>(2);
+    if (axis1 != null) axes.put(packPosition(position1), (double) axis1);
+    if (axis2 != null) axes.put(packPosition(position2), (double) axis2);
+    NATIVE_RAILS.put(key, axes);
+}
+
+/**
+ * 一度でも {@link #markNativeRail} された端点対か（＝ BTE が構築時に軸を差し替えたことがあるか）。
+ *
+ * <p>これは {@link #isNativeRail} とは別の、<b>{@code NODE_STATE} を参照しない</b>問い。
+ * 「BTE がこの端点対を一度でも扱ったか」だけをキー参照 1 回で判定するので、
+ * 描画 pass の入口で「BTE がまったく関与していないレール」を世界照会なしで弾く用途に使う。
+ */
+public static boolean wasMarkedNativeRail(String key) {
+    return key != null && NATIVE_RAILS.containsKey(key);
+}
+
+/**
+ * この端点対がネイティブ解決済みか（＝ in-place 注入を無効化して MTR 純正に委ねるべきか）。
+ *
+ * <p>「記録した BTE 軸が今もそのまま有効」であれば true。すなわち全端について
+ * <ul>
+ *   <li>BTE 端だったなら {@link #getNativeNodeAxis} が今も同じ軸を返す（offset が 0 で、
+ *       軸が 22.5 度グリッド上にある）</li>
+ *   <li>MTR 標準ノード端だったなら今も BTE ノードになっていない</li>
+ * </ul>
+ * を満たすときだけ true を返す。ノード軸の回転・offset 変更・bind/unbind に自動追随し、
+ * 恒久フラグのような「入力が変わっても true のまま残る」状態をつくらない。
+ */
+public static boolean isNativeRail(Position position1, Position position2) {
+    if (position1 == null || position2 == null) return false;
+    final java.util.Map<Long, Double> axes = NATIVE_RAILS.get(railMathKey(position1, position2));
+    if (axes == null) return false;
+
+    if (!bte$nativeEndStillValid(position1, axes)) return false;
+    return bte$nativeEndStillValid(position2, axes);
+}
+
+/** 片端が「記録した条件を今も満たす」か。 */
+private static boolean bte$nativeEndStillValid(Position position, java.util.Map<Long, Double> axes) {
+    final double[] out = new double[4];
+    final boolean nativeNow = getNativeNodeAxis(Init.positionToBlockPos(position), out);
+    final Double recorded = axes.get(packPosition(position));
+
+    if (recorded == null) {
+        // MTR 標準ノード端だったのが BTE ノードに置き換わった → 条件は崩れた
+        return !nativeNow;
+    }
+    // BTE 端だったのに現在ネイティブ扱いでなくなった（offset が 0 でなくなった／グリッド外に回した）
+    if (!nativeNow) return false;
+    return Math.abs(out[0] - recorded) <= 1e-6;
 }
 
     /**
-     * {@code RailGetAnglesMixin} が MTR へ渡す「ノードの生軸」を {@link #NODE_STATE} から引く。
+     * {@code Rail.getAngles} で BTE ノードの生軸をそのまま MTR に渡してよいか（＝軸が 22.5 度グリッド上であること）。
      *
-     * <p>bound な BTE ノードなら {@code out[0]} に {@code angleDegrees}（0〜180）を、
-     * {@code out[1..3]} にサブブロック offset を入れて true を返す。
+     * <p><b>MTR の角度は 22.5 度刻みの 16 方向しかない。</b>{@code Angle} は
+     * {@code E, SEE, SE, SSE, S, SSW, SW, SWW, W, NWW, NW, NNW, N, NNE, NE, NEE} の
+     * 16 要素 enum で、{@code Angle.fromAngle(float)} は
+     * {@code values()[getQuadrant(a, true)]} として角度を<b>必ず 22.5 度刻みに丸める</b>。
+     * {@code RailMath} の公開コンストラクタも {@code (Position, Angle, Position, Angle, ...)}
+     * の 1 つしかなく、生の double を直接受け取る入口が無い。
      *
-     * <p><b>offset が非ゼロなら false を返す。</b>
-     * BTE のサブブロックずらしは MTR の {@code RailMath} 入力
-     * （{@code Position} 整数と {@code Angle} 2 つ）には表現できない。
-     * そのようなレールは従来どおり in-place 注入に任せる。
-     *
-     * @return BTE ノードとしてネイティブ注入できるときだけ true
+     * <p>したがってノード軸が 22.5 度の倍数でなければ、{@code RailGetAnglesMixin} が
+     * 軸を差し替えても MTR は丸めた値で {@code RailMath} を構築する。その場合
+     * MTR の内部形状は BTE の {@link botamochi129.bte.mod.data.ArcCurve}
+     * （丸めなしの正確な軸から計算）とは<b>別のカーブ</b>になり、
+     * 「どれか一方だけ別のカーブを走る」状態になる。よってグリッド外の軸は
+     * MTR のネイティブ経路に乗せず、BTE の in-place 注入に一本化する。
      */
     public static boolean getNativeNodeAxis(BlockPos pos, double[] out) {
         if (pos == null || out == null || out.length < 4) return false;
@@ -468,12 +574,21 @@ public static boolean isNativeRail(String key) {
         final double[] v = NODE_STATE.get(k);
         if (v == null || v.length < 5 || v[4] == 0) return false;
         if (v[1] != 0.0 || v[2] != 0.0 || v[3] != 0.0) return false;
+        // ★ 軸が 22.5 度グリッド上でなければ MTR は丸めてしまう = 別のカーブになる
+        if (!isOnMtrAngleGrid(v[0])) return false;
         out[0] = v[0];
         out[1] = v[1];
         out[2] = v[2];
         out[3] = v[3];
         NODE_STATE_LAST_SEEN.put(k, System.currentTimeMillis());
         return true;
+    }
+
+    /** MTR の {@code Angle} が表現できる角度（22.5 度の倍数）か。 */
+    public static boolean isOnMtrAngleGrid(double degrees) {
+        if (!Double.isFinite(degrees)) return false;
+        final double q = degrees / 22.5D;
+        return Math.abs(q - Math.rint(q)) <= 1e-6;
     }
 
     /**
@@ -747,10 +862,18 @@ public static boolean isNativeRail(String key) {
             );
 
             if (rail.railMath instanceof IRailMathExtra mathExtra) {
-                // ★ 順序は指定しない。bte$enableBezier が MTR の正規順 (辞書順で小さい端が
-                //   position1) へ揃える。ここを nodePos 起点で固定すると、nodePos が大きい側の
-                //   レールだけ曲線が反転し、列車が逆走 / 反対ノードへ停車する。
-                mathExtra.bte$enableBezier(nodePos, startVec, startRad, otherPos, endVec, endRad, verticalRadius, shape);
+                // ★ 描画側（RenderRailsMixin / RailMathMixin#bte$capturePositions）と
+                //   同じ述語でソルバを選ぶ。レール 1 本につき曲線のソースは必ず 1 個にする。
+                //   ネイティブ可（軸が 22.5 度グリッド上かつ offset が 0）なら MTR 純正に委ね、
+                //   そうでない場合だけ BTE の精确解で上書きする。
+                //   両方を無条件に書くと getPositionY の委譲先だけが変わり、
+                //   水平形状は MTR / 高低形状は BTE という混線が起きうる。
+                if (!isNativeRail(nodePos, otherPos)) {
+                    // ★ 順序は指定しない。bte$enableBezier が MTR の正規順 (辞書順で小さい端が
+                    //   position1) へ揃える。ここを nodePos 起点で固定すると、nodePos が大きい側の
+                    //   レールだけ曲線が反転し、列車が逆走 / 反対ノードへ停車する。
+                    mathExtra.bte$enableBezier(nodePos, startVec, startRad, otherPos, endVec, endRad, verticalRadius, shape);
+                }
             }
 
             // ★ 経路探索へ同じ角度を publish する (bezier と MTR の保存角度の乖離を解消)

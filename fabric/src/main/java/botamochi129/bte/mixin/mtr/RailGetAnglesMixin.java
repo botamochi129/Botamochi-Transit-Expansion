@@ -94,9 +94,13 @@ public abstract class RailGetAnglesMixin {
         ));
 
         // BTE 端を1つでも差し替えたので、この端点対は MTR 自身が正しく構築する。
-        // in-place 注入を無効化する。
+        // in-place 注入を無効化する。差し込んだ軸そのものを記録しておき、
+        // 後からノード軸や offset が変わった時点で isNativeRail が false を返すようにする
+        // （恒久フラグのままだと、形状が更新されず再入場まで直らない）。
         StraightNodeBlockEntity.markNativeRail(
-                StraightNodeBlockEntity.railMathKey(position1, position2)
+                StraightNodeBlockEntity.railMathKey(position1, position2),
+                position1, position2,
+                bteAxis1, bteAxis2
         );
     }
 
